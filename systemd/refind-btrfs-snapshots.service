@@ -4,11 +4,11 @@ Documentation=https://github.com/jmylchreest/refind-btrfs-snapshots
 After=local-fs.target
 Before=snapper-boot.service
 ConditionPathExists=/usr/bin/refind-btrfs-snapshots
-ConditionPathExists=/etc/refind-btrfs-snapshots.conf
+ConditionPathExists=/etc/refind-btrfs-snapshots.yaml
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/refind-btrfs-snapshots generate -g -y -c /etc/refind-btrfs-snapshots.conf
+ExecStart=/usr/bin/refind-btrfs-snapshots generate -g -y -c /etc/refind-btrfs-snapshots.yaml
 User=root
 StandardOutput=journal
 StandardError=journal
