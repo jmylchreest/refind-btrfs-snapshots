@@ -481,26 +481,13 @@ func logOperationSummary(summary *OperationSummary, isDryRun bool) {
 		prefix = "[DRY RUN] "
 	}
 
-	logEntry := log.Info()
-
-	if len(summary.IncludedSnapshots) > 0 {
-		logEntry.Strs("included_snapshots", summary.IncludedSnapshots)
-	}
-	if len(summary.AddedSnapshots) > 0 {
-		logEntry.Strs("added_snapshots", summary.AddedSnapshots)
-	}
-	if len(summary.RemovedSnapshots) > 0 {
-		logEntry.Strs("removed_snapshots", summary.RemovedSnapshots)
-	}
-	if len(summary.UpdatedFstabs) > 0 {
-		logEntry.Strs("updated_fstabs", summary.UpdatedFstabs)
-	}
-	if len(summary.UpdatedConfigs) > 0 {
-		logEntry.Strs("updated_configs", summary.UpdatedConfigs)
-	}
-	if len(summary.WritableChanges) > 0 {
-		logEntry.Strs("writable_changes", summary.WritableChanges)
-	}
+	logEntry := log.Info().
+		Strs("included_snapshots", summary.IncludedSnapshots).
+		Strs("added_snapshots", summary.AddedSnapshots).
+		Strs("removed_snapshots", summary.RemovedSnapshots).
+		Strs("updated_fstabs", summary.UpdatedFstabs).
+		Strs("updated_configs", summary.UpdatedConfigs).
+		Strs("writable_changes", summary.WritableChanges)
 
 	logEntry.Msg(prefix + "Operation summary")
 }
