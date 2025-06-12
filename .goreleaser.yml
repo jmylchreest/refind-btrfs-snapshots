@@ -25,6 +25,12 @@ builds:
       - -X 'github.com/jmylchreest/refind-btrfs-snapshots/cmd.Commit={{.Commit}}'
       - -X 'github.com/jmylchreest/refind-btrfs-snapshots/cmd.BuildTime={{.Date}}'
 
+archives:
+  - format: tar.gz
+    files:
+      - configs/*
+      - systemd/*
+
 changelog:
   sort: asc
   filters:
