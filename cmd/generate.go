@@ -514,7 +514,9 @@ func applyAllChanges(patch *diff.PatchDiff, fstabManager *fstab.Manager, generat
 			continue
 		}
 
-		log.Info().Str("path", fileDiff.Path).Msg("Successfully updated file")
+		// Log with file type for better categorization
+		fileType := getFileType(fileDiff.Path)
+		log.Info().Str("path", fileDiff.Path).Str("type", fileType).Msg("Successfully updated file")
 	}
 
 	return nil
@@ -573,4 +575,24 @@ func checkRootPrivileges() error {
 	}
 
 	return nil
+}
+
+// getFileType determines the type of file based on its path
+func getFileType(path string) string {
+	if strings.HasSuffix(path, "/etc/fstab") {
+		return "fstab"
+	}
+	if strings.HasSuffix(path, "refind.conf") {
+		return "refind_config"
+	}
+	if strings.HasSuffix(path, "refind_linux.conf") {
+		return "refind_linux"
+	}
+	if strings.HasSuffix(path, "refind-btrfs-snapshots.conf") {
+		return "refind_include"
+	}
+	if strings.Contains(path, "/EFI/") && strings.HasSuffix(path, ".conf") {
+		return "refind_config"
+	}
+	return "unknown"
 }
