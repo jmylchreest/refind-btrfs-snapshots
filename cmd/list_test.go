@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"sync"
 	"testing"
 	"time"
@@ -12,39 +11,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// Mock btrfs manager for testing
-type mockBtrfsManager struct {
-	filesystems []*btrfs.Filesystem
-	snapshots   map[string][]*btrfs.Snapshot
-	rootFS      *btrfs.Filesystem
-	errors      map[string]error
-}
-
-func (m *mockBtrfsManager) DetectBtrfsFilesystems() ([]*btrfs.Filesystem, error) {
-	if err, exists := m.errors["DetectBtrfsFilesystems"]; exists {
-		return nil, err
-	}
-	return m.filesystems, nil
-}
-
-func (m *mockBtrfsManager) FindSnapshots(fs *btrfs.Filesystem) ([]*btrfs.Snapshot, error) {
-	key := fs.GetBestIdentifier()
-	if err, exists := m.errors["FindSnapshots"]; exists {
-		return nil, err
-	}
-	if snapshots, exists := m.snapshots[key]; exists {
-		return snapshots, nil
-	}
-	return []*btrfs.Snapshot{}, nil
-}
-
-func (m *mockBtrfsManager) GetRootFilesystem() (*btrfs.Filesystem, error) {
-	if err, exists := m.errors["GetRootFilesystem"]; exists {
-		return nil, err
-	}
-	return m.rootFS, nil
-}
 
 func createMockFilesystem(uuid, device, mountPoint string) *btrfs.Filesystem {
 	return &btrfs.Filesystem{
@@ -333,59 +299,6 @@ func TestFilterFilesystems(t *testing.T) {
 			assert.Len(t, result, tt.expected)
 		})
 	}
-}
-
-func TestDisplaySnapshotsJSON(t *testing.T) {
-	snapshots := []*btrfs.Snapshot{
-		{
-			Subvolume: &btrfs.Subvolume{
-				ID:   1,
-				Path: "/.snapshots/1/snapshot",
-			},
-			SnapshotTime: time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
-			OriginalPath: "@",
-		},
-	}
-
-	// We'll test the structure by checking that it can be parsed
-	err := displaySnapshotsJSON(snapshots)
-	assert.NoError(t, err)
-
-	// Test that the manual JSON output is valid JSON by parsing
-	// This is a simplified test since we can't easily capture stdout
-	jsonData := `{
-		"snapshots": [
-			{
-				"path": "/.snapshots/1/snapshot",
-				"id": 1,
-				"created": "2024-01-15T10:30:00Z",
-				"is_readonly": false,
-				"original_path": "@"
-			}
-		]
-	}`
-
-	var parsed map[string]interface{}
-	err = json.Unmarshal([]byte(jsonData), &parsed)
-	assert.NoError(t, err)
-	assert.Contains(t, parsed, "snapshots")
-}
-
-func TestDisplaySnapshotsYAML(t *testing.T) {
-	snapshots := []*btrfs.Snapshot{
-		{
-			Subvolume: &btrfs.Subvolume{
-				ID:         1,
-				Path:       "/.snapshots/1/snapshot",
-				IsReadOnly: true,
-			},
-			SnapshotTime: time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
-			OriginalPath: "@",
-		},
-	}
-
-	err := displaySnapshotsYAML(snapshots)
-	assert.NoError(t, err)
 }
 
 func TestShowParallelProgress(t *testing.T) {

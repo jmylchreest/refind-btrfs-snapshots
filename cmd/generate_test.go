@@ -376,26 +376,6 @@ func TestViperBindingsForGenerate(t *testing.T) {
 	assert.Equal(t, true, viper.GetBool("force"))
 }
 
-// Mock structures for testing complex scenarios
-type mockESPDetector struct {
-	esp    *mockESP
-	error  error
-	access error
-}
-
-type mockESP struct {
-	MountPoint string
-	UUID       string
-}
-
-func (m *mockESPDetector) FindESP() (*mockESP, error) {
-	return m.esp, m.error
-}
-
-func (m *mockESPDetector) ValidateESPAccess() error {
-	return m.access
-}
-
 func TestGenerateConfigurationScenarios(t *testing.T) {
 	// Test various configuration scenarios that would be encountered
 	// in the generate command

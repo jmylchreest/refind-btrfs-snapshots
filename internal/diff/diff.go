@@ -30,7 +30,7 @@ func (fd *FileDiff) Generate() string {
 func (fd *FileDiff) generateNewFileDiff() string {
 	var result strings.Builder
 
-	result.WriteString(fmt.Sprintf("--- /dev/null\n"))
+	result.WriteString("--- /dev/null\n")
 	result.WriteString(fmt.Sprintf("+++ %s\n", fd.Path))
 	result.WriteString("@@ -0,0 +1,")
 
