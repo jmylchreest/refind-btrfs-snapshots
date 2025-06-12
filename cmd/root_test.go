@@ -50,13 +50,13 @@ func TestInitConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Save original cfgFile and environment 
+			// Save original cfgFile and environment
 			originalCfgFile := cfgFile
 			defer func() { cfgFile = originalCfgFile }()
 
 			// Reset viper for each test
 			viper.Reset()
-			
+
 			// Set up environment variables
 			for key, value := range tt.setupEnv {
 				os.Setenv(key, value)
@@ -207,7 +207,7 @@ func TestExecute(t *testing.T) {
 	// Test that Execute function exists and returns no error when called with help
 	// We can't easily test the full command execution without complex setup
 	// But we can test that the function is callable
-	
+
 	// Save original args
 	originalArgs := os.Args
 	defer func() { os.Args = originalArgs }()
@@ -225,7 +225,7 @@ func TestExecute(t *testing.T) {
 func TestRootCmdConfiguration(t *testing.T) {
 	// Test root command configuration
 	require.NotNil(t, rootCmd)
-	
+
 	assert.Equal(t, "refind-btrfs-snapshots", rootCmd.Use)
 	assert.Equal(t, "Generate rEFInd boot entries for btrfs snapshots", rootCmd.Short)
 	assert.Contains(t, rootCmd.Long, "Generate rEFInd boot menu entries for btrfs snapshots")
@@ -250,7 +250,7 @@ func TestRootCmdPersistentPreRun(t *testing.T) {
 	// The actual test would involve calling the PersistentPreRun function
 	// but since it's embedded in the command, we'll test initLogging directly
 	initLogging()
-	
+
 	assert.Equal(t, zerolog.DebugLevel, zerolog.GlobalLevel())
 }
 
@@ -258,7 +258,7 @@ func TestRootCmdPersistentPreRun(t *testing.T) {
 func TestViperBindings(t *testing.T) {
 	// This test verifies that the viper bindings work correctly
 	// In a real scenario, these would be set by cobra flag parsing
-	
+
 	viper.Reset()
 	setDefaults()
 

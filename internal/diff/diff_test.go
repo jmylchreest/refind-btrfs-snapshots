@@ -71,7 +71,7 @@ func TestFileDiff_generateNewFileDiff(t *testing.T) {
 	}
 
 	result := fileDiff.generateNewFileDiff()
-	
+
 	if !strings.Contains(result, "--- /dev/null") {
 		t.Error("New file diff should contain '--- /dev/null'")
 	}
@@ -137,11 +137,11 @@ func TestGenerateSimpleDiff(t *testing.T) {
 
 func TestPatchDiff(t *testing.T) {
 	patch := NewPatchDiff()
-	
+
 	if patch == nil {
 		t.Fatal("NewPatchDiff() returned nil")
 	}
-	
+
 	if len(patch.Files) != 0 {
 		t.Errorf("NewPatchDiff() should create empty patch, got %d files", len(patch.Files))
 	}
@@ -153,13 +153,13 @@ func TestPatchDiff(t *testing.T) {
 		Modified: "new",
 		IsNew:    false,
 	}
-	
+
 	patch.AddFile(fileDiff)
-	
+
 	if len(patch.Files) != 1 {
 		t.Errorf("AddFile() should add file, got %d files", len(patch.Files))
 	}
-	
+
 	if patch.Files[0] != fileDiff {
 		t.Error("AddFile() should add the correct file")
 	}
@@ -174,7 +174,7 @@ func TestPatchDiff(t *testing.T) {
 func TestGenerateFileContent(t *testing.T) {
 	content := "test content"
 	result := GenerateFileContent(content)
-	
+
 	if result != content {
 		t.Errorf("GenerateFileContent() = %v, want %v", result, content)
 	}

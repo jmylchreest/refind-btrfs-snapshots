@@ -53,7 +53,7 @@ func (fd *FileDiff) generateNewFileDiff() string {
 // generateUnifiedDiff creates a unified diff between original and modified content
 func (fd *FileDiff) generateUnifiedDiff() string {
 	var originalLines, modifiedLines []string
-	
+
 	if fd.Original == "" {
 		originalLines = []string{}
 	} else if strings.HasSuffix(fd.Original, "\n") {
@@ -62,7 +62,7 @@ func (fd *FileDiff) generateUnifiedDiff() string {
 	} else {
 		originalLines = strings.Split(fd.Original, "\n")
 	}
-	
+
 	if fd.Modified == "" {
 		modifiedLines = []string{}
 	} else if strings.HasSuffix(fd.Modified, "\n") {

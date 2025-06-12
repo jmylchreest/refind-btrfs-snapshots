@@ -28,7 +28,7 @@ func NewCommaParameterParser() *ParameterParser {
 
 // Extract extracts the value of a parameter from the given text
 func (p *ParameterParser) Extract(text, param string) string {
-	pattern := regexp.MustCompile(fmt.Sprintf(`%s=([^%s]+)`, 
+	pattern := regexp.MustCompile(fmt.Sprintf(`%s=([^%s]+)`,
 		regexp.QuoteMeta(param), p.separators))
 	matches := pattern.FindStringSubmatch(text)
 	if len(matches) > 1 {
@@ -39,20 +39,20 @@ func (p *ParameterParser) Extract(text, param string) string {
 
 // Update replaces the value of a parameter in the given text
 func (p *ParameterParser) Update(text, param, newValue string) string {
-	pattern := regexp.MustCompile(fmt.Sprintf(`%s=([^%s]+)`, 
+	pattern := regexp.MustCompile(fmt.Sprintf(`%s=([^%s]+)`,
 		regexp.QuoteMeta(param), p.separators))
-	
+
 	replacement := fmt.Sprintf("%s=%s", param, newValue)
-	
+
 	if pattern.MatchString(text) {
 		return pattern.ReplaceAllString(text, replacement)
 	}
-	
+
 	// Parameter doesn't exist, append it
 	if text == "" {
 		return replacement
 	}
-	
+
 	// Use appropriate separator based on parser type
 	separator := " "
 	if strings.Contains(p.separators, ",") {
@@ -69,7 +69,7 @@ func (p *ParameterParser) Has(text, param string) bool {
 
 // Remove removes a parameter from the text
 func (p *ParameterParser) Remove(text, param string) string {
-	pattern := regexp.MustCompile(fmt.Sprintf(`\s*%s=([^%s]+)\s*`, 
+	pattern := regexp.MustCompile(fmt.Sprintf(`\s*%s=([^%s]+)\s*`,
 		regexp.QuoteMeta(param), p.separators))
 	return strings.TrimSpace(pattern.ReplaceAllString(text, " "))
 }
@@ -79,13 +79,13 @@ func (p *ParameterParser) ExtractAll(text string) map[string]string {
 	params := make(map[string]string)
 	pattern := regexp.MustCompile(`(\w+)=([^` + p.separators + `]+)`)
 	matches := pattern.FindAllStringSubmatch(text, -1)
-	
+
 	for _, match := range matches {
 		if len(match) >= 3 {
 			params[match[1]] = match[2]
 		}
 	}
-	
+
 	return params
 }
 
@@ -126,7 +126,7 @@ func (p *BootOptionsParser) UpdateSubvol(options, newSubvol string) string {
 		newRootflags := fmt.Sprintf("subvol=%s", newSubvol)
 		return p.SpaceParser.Update(options, "rootflags", newRootflags)
 	}
-	
+
 	// Update subvol in existing rootflags
 	updatedRootflags := p.CommaParser.Update(rootflags, "subvol", newSubvol)
 	return p.SpaceParser.Update(options, "rootflags", updatedRootflags)
@@ -140,7 +140,7 @@ func (p *BootOptionsParser) UpdateSubvolID(options, newSubvolID string) string {
 		newRootflags := fmt.Sprintf("subvolid=%s", newSubvolID)
 		return p.SpaceParser.Update(options, "rootflags", newRootflags)
 	}
-	
+
 	// Update subvolid in existing rootflags
 	updatedRootflags := p.CommaParser.Update(rootflags, "subvolid", newSubvolID)
 	return p.SpaceParser.Update(options, "rootflags", updatedRootflags)

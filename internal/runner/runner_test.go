@@ -37,12 +37,12 @@ func TestDryRunner(t *testing.T) {
 	// Test MkdirAll (should not create directory)
 	tempDir := t.TempDir()
 	testDir := filepath.Join(tempDir, "test-dry-mkdir")
-	
+
 	err = runner.MkdirAll(testDir, 0755, "test mkdir")
 	if err != nil {
 		t.Errorf("DryRunner MkdirAll should not return error, got: %v", err)
 	}
-	
+
 	// Directory should not exist
 	if _, err := os.Stat(testDir); !os.IsNotExist(err) {
 		t.Error("DryRunner should not create actual directory")
@@ -51,12 +51,12 @@ func TestDryRunner(t *testing.T) {
 	// Test WriteFile (should not create file)
 	testFile := filepath.Join(tempDir, "test-dry-file.txt")
 	testContent := []byte("test content")
-	
+
 	err = runner.WriteFile(testFile, testContent, 0644, "test write")
 	if err != nil {
 		t.Errorf("DryRunner WriteFile should not return error, got: %v", err)
 	}
-	
+
 	// File should not exist
 	if _, err := os.Stat(testFile); !os.IsNotExist(err) {
 		t.Error("DryRunner should not create actual file")
@@ -86,12 +86,12 @@ func TestRealRunner(t *testing.T) {
 	// Test MkdirAll
 	tempDir := t.TempDir()
 	testDir := filepath.Join(tempDir, "test-real-mkdir")
-	
+
 	err = runner.MkdirAll(testDir, 0755, "test mkdir")
 	if err != nil {
 		t.Errorf("RealRunner MkdirAll should not return error, got: %v", err)
 	}
-	
+
 	// Directory should exist
 	if info, err := os.Stat(testDir); err != nil {
 		t.Errorf("RealRunner should create directory, got error: %v", err)
@@ -102,12 +102,12 @@ func TestRealRunner(t *testing.T) {
 	// Test WriteFile
 	testFile := filepath.Join(tempDir, "test-real-file.txt")
 	testContent := []byte("test content")
-	
+
 	err = runner.WriteFile(testFile, testContent, 0644, "test write")
 	if err != nil {
 		t.Errorf("RealRunner WriteFile should not return error, got: %v", err)
 	}
-	
+
 	// File should exist with correct content
 	content, err := os.ReadFile(testFile)
 	if err != nil {

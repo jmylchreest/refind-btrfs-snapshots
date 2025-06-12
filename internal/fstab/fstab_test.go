@@ -39,8 +39,8 @@ UUID=12345678-1234-1234-1234-123456789abc /home btrfs subvol=@home,defaults 0 2
 			wantErr:     false,
 		},
 		{
-			name: "empty file",
-			content: "",
+			name:        "empty file",
+			content:     "",
 			wantEntries: 0,
 			wantLines:   0,
 			wantErr:     false,
@@ -461,10 +461,10 @@ func TestManager_updateRootEntry(t *testing.T) {
 
 func TestManager_updateSubvolOption(t *testing.T) {
 	tests := []struct {
-		name       string
-		options    string
-		newSubvol  string
-		want       string
+		name      string
+		options   string
+		newSubvol string
+		want      string
 	}{
 		{
 			name:      "add to empty options",

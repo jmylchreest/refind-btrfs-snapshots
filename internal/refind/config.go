@@ -139,7 +139,7 @@ func (p *Parser) ParseConfig(configPath string) (*Config, error) {
 	config.Entries = append(config.Entries, entries...)
 	config.IncludePaths = includes
 	config.GlobalConfig = globals
-	
+
 	log.Info().Str("path", configPath).Int("entries", len(entries)).Msg("Parsed main rEFInd config file")
 
 	// Parse included files
@@ -154,7 +154,7 @@ func (p *Parser) ParseConfig(configPath string) (*Config, error) {
 			log.Warn().Err(err).Str("path", fullPath).Msg("Failed to parse included config")
 			continue
 		}
-		
+
 		log.Info().Str("path", fullPath).Int("entries", len(includeEntries)).Msg("Parsed included config file")
 		config.Entries = append(config.Entries, includeEntries...)
 	}
@@ -168,7 +168,7 @@ func (p *Parser) ParseConfig(configPath string) (*Config, error) {
 				log.Warn().Err(err).Str("path", linuxConfigPath).Msg("Failed to parse refind_linux.conf")
 				continue
 			}
-			
+
 			log.Info().Str("path", linuxConfigPath).Int("entries", len(linuxEntries)).Msg("Parsed refind_linux.conf file")
 			// Add refind_linux.conf entries at the beginning (higher priority)
 			config.Entries = append(linuxEntries, config.Entries...)
@@ -536,7 +536,7 @@ func (g *Generator) updateOptionsForSnapshot(originalOptions string, snapshot *b
 	parser := params.NewBootOptionsParser()
 	options := originalOptions
 
-	// Update rootflags subvol parameter  
+	// Update rootflags subvol parameter
 	// Convert snapshot path to be relative to the root subvolume
 	// snapshot.Path is like "/.snapshots/388/snapshot", we want "@/.snapshots/388/snapshot"
 	snapshotSubvol := "@" + snapshot.Path
@@ -546,7 +546,7 @@ func (g *Generator) updateOptionsForSnapshot(originalOptions string, snapshot *b
 	}
 	options = parser.UpdateSubvol(options, snapshotSubvol)
 
-	// Update rootflags subvolid parameter  
+	// Update rootflags subvolid parameter
 	options = parser.UpdateSubvolID(options, fmt.Sprintf("%d", snapshot.ID))
 
 	// Update initrd path if present
@@ -799,7 +799,7 @@ func (g *Generator) GenerateManagedConfigDiff(sourceEntries []*MenuEntry, snapsh
 	var originalContent string
 	var existingEntries map[string]*MenuEntry
 	var isNewFile bool
-	
+
 	if existingFileContent, err := os.ReadFile(configPath); err == nil {
 		originalContent = string(existingFileContent)
 		existingEntries = g.parseExistingManagedConfig(originalContent)
@@ -1006,27 +1006,27 @@ func (p *Parser) findInitrdInDir(dir string) string {
 // parseExistingManagedConfig parses an existing managed config to extract menuentry customizations
 func (g *Generator) parseExistingManagedConfig(content string) map[string]*MenuEntry {
 	entries := make(map[string]*MenuEntry)
-	
+
 	// Parse the content manually since parseConfigFile expects a file path
 	var currentEntry *MenuEntry
 	var inMenuEntry bool
 	var inSubmenu bool
-	
+
 	scanner := bufio.NewScanner(strings.NewReader(content))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		
+
 		// Skip empty lines and comments
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		
+
 		// Handle menuentry start
 		if strings.HasPrefix(line, "menuentry ") {
 			if currentEntry != nil {
 				entries[currentEntry.Title] = currentEntry
 			}
-			
+
 			title := extractQuotedValue(line, "menuentry ")
 			currentEntry = &MenuEntry{
 				Title:     title,
@@ -1036,13 +1036,13 @@ func (g *Generator) parseExistingManagedConfig(content string) map[string]*MenuE
 			inSubmenu = false
 			continue
 		}
-		
+
 		// Handle submenuentry start
 		if strings.HasPrefix(line, "submenuentry ") && inMenuEntry {
 			inSubmenu = true
 			continue
 		}
-		
+
 		// Handle closing braces
 		if line == "}" {
 			if inSubmenu {
@@ -1056,18 +1056,18 @@ func (g *Generator) parseExistingManagedConfig(content string) map[string]*MenuE
 			}
 			continue
 		}
-		
+
 		// Handle configuration directives for menuentry only (not submenu)
 		if inMenuEntry && !inSubmenu && currentEntry != nil {
 			g.parser.parseMenuDirective(currentEntry, line)
 		}
 	}
-	
+
 	// Add the last entry if it exists
 	if currentEntry != nil {
 		entries[currentEntry.Title] = currentEntry
 	}
-	
+
 	return entries
 }
 
@@ -1075,13 +1075,13 @@ func (g *Generator) parseExistingManagedConfig(content string) map[string]*MenuE
 // and by their loader to create one menuentry per functional boot configuration
 func (g *Generator) groupEntriesByBase(entries []*MenuEntry) map[string][]*MenuEntry {
 	groups := make(map[string][]*MenuEntry)
-	
+
 	for _, entry := range entries {
 		// Create a group key based on the loader to group functionally similar entries
 		groupKey := g.generateGroupKey(entry)
 		groups[groupKey] = append(groups[groupKey], entry)
 	}
-	
+
 	return groups
 }
 
@@ -1096,7 +1096,7 @@ func (g *Generator) generateGroupKey(entry *MenuEntry) string {
 		}
 		return loaderName
 	}
-	
+
 	// For refind_linux.conf entries without loaders, try to infer from the directory
 	// or group all entries from the same filesystem together
 	if entry.SourceFile != "" && strings.HasSuffix(entry.SourceFile, "refind_linux.conf") {
@@ -1105,7 +1105,7 @@ func (g *Generator) generateGroupKey(entry *MenuEntry) string {
 		dir := filepath.Dir(entry.SourceFile)
 		return "refind_linux:" + dir
 	}
-	
+
 	// Fallback to base name extraction for entries without loader
 	return g.extractBaseName(entry.Title)
 }
@@ -1115,7 +1115,7 @@ func (g *Generator) extractBaseName(title string) string {
 	// Remove common timestamp patterns like "(YYYY-MM-DD_HH-MM-SS)"
 	timestampPattern := regexp.MustCompile(`\s*\(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\)$`)
 	baseName := timestampPattern.ReplaceAllString(title, "")
-	
+
 	// Clean up any trailing whitespace
 	return strings.TrimSpace(baseName)
 }
@@ -1139,7 +1139,7 @@ func (g *Generator) generateMenuTitle(groupKey string, templateEntry *MenuEntry)
 			}
 		}
 	}
-	
+
 	// Fallback to original title
 	return templateEntry.Title
 }
@@ -1148,7 +1148,7 @@ func (g *Generator) generateMenuTitle(groupKey string, templateEntry *MenuEntry)
 func (g *Generator) mergeCustomizations(template, existing *MenuEntry) *MenuEntry {
 	// Create a copy of the template
 	merged := *template
-	
+
 	// Preserve user customizations for menuentry attributes
 	if existing.Icon != "" {
 		merged.Icon = existing.Icon
@@ -1166,22 +1166,22 @@ func (g *Generator) mergeCustomizations(template, existing *MenuEntry) *MenuEntr
 		merged.Options = existing.Options
 		merged.BootOptions = parseBootOptions(existing.Options)
 	}
-	
+
 	// Note: We don't preserve submenues - those will be regenerated
 	merged.Submenues = []*SubmenuEntry{}
-	
+
 	return &merged
 }
 
 // generateTemplateEntry creates a template entry for new files
 func (g *Generator) generateTemplateEntry(sourceEntries []*MenuEntry, snapshots []*btrfs.Snapshot, rootFS *btrfs.Filesystem) string {
 	var content strings.Builder
-	
+
 	content.WriteString("\n")
 	content.WriteString("# TEMPLATE ENTRY - Customize this example and remove the 'disabled' line to enable\n")
 	content.WriteString("# You can create multiple menuentry blocks for different boot configurations\n")
 	content.WriteString("\n")
-	
+
 	// Try to infer some values from the source entries
 	var sampleOptions string
 	if len(sourceEntries) > 0 {
@@ -1195,7 +1195,7 @@ func (g *Generator) generateTemplateEntry(sourceEntries []*MenuEntry, snapshots 
 			sampleOptions = "quiet rw rootflags=subvol=@"
 		}
 	}
-	
+
 	content.WriteString("menuentry \"Arch Linux\" {\n")
 	content.WriteString("    disabled\n")
 	content.WriteString("    icon     /EFI/refind/icons/os_arch.png\n")
@@ -1206,7 +1206,7 @@ func (g *Generator) generateTemplateEntry(sourceEntries []*MenuEntry, snapshots 
 	}
 	content.WriteString("    \n")
 	content.WriteString("    # Snapshot submenus will be automatically generated below:\n")
-	
+
 	// Add example submenus
 	for i, snapshot := range snapshots {
 		if i >= 2 { // Only show first 2 as examples
@@ -1220,7 +1220,7 @@ func (g *Generator) generateTemplateEntry(sourceEntries []*MenuEntry, snapshots 
 		}
 		content.WriteString("    }\n")
 	}
-	
+
 	content.WriteString("}\n")
 	content.WriteString("\n")
 	content.WriteString("# INSTRUCTIONS:\n")
@@ -1229,41 +1229,41 @@ func (g *Generator) generateTemplateEntry(sourceEntries []*MenuEntry, snapshots 
 	content.WriteString("# 3. Adjust the options line to match your boot requirements\n")
 	content.WriteString("# 4. Save the file and regenerate to see your customized menu with snapshots\n")
 	content.WriteString("# 5. You can create multiple menuentry blocks for different configurations\n")
-	
+
 	return content.String()
 }
 
 // generateFromExistingEntries generates content from existing customized entries
 func (g *Generator) generateFromExistingEntries(existingEntries map[string]*MenuEntry, snapshots []*btrfs.Snapshot, rootFS *btrfs.Filesystem) string {
 	var content strings.Builder
-	
+
 	if len(existingEntries) == 0 {
 		content.WriteString("# No customized menu entries found.\n")
 		content.WriteString("# Please add menuentry blocks to this file or regenerate to create templates.\n")
 		return content.String()
 	}
-	
+
 	first := true
 	for title, entry := range existingEntries {
 		if !first {
 			content.WriteString("\n")
 		}
 		first = false
-		
+
 		entryContent := g.generateSingleMenuEntry(title, entry, snapshots, rootFS)
 		content.WriteString(entryContent)
 	}
-	
+
 	return content.String()
 }
 
 // generateSingleMenuEntry generates a single menuentry with snapshots as submenus
 func (g *Generator) generateSingleMenuEntry(title string, templateEntry *MenuEntry, snapshots []*btrfs.Snapshot, rootFS *btrfs.Filesystem) string {
 	var content strings.Builder
-	
+
 	// Main menuentry
 	content.WriteString(fmt.Sprintf("menuentry \"%s\" {\n", title))
-	
+
 	// Add all the preserved/template attributes
 	if templateEntry.Icon != "" {
 		content.WriteString(fmt.Sprintf("    icon %s\n", templateEntry.Icon))
@@ -1280,22 +1280,22 @@ func (g *Generator) generateSingleMenuEntry(title string, templateEntry *MenuEnt
 	if templateEntry.Options != "" {
 		content.WriteString(fmt.Sprintf("    options %s\n", templateEntry.Options))
 	}
-	
+
 	// Add submenu entries for snapshots
 	for _, snapshot := range snapshots {
 		snapshotTitle := fmt.Sprintf("%s (%s)", title, g.getSnapshotDisplayName(snapshot))
 		content.WriteString(fmt.Sprintf("    submenuentry \"%s\" {\n", snapshotTitle))
-		
+
 		// For submenus, we only need to modify the options to point to the snapshot
 		snapshotOptions := g.updateOptionsForSnapshot(templateEntry.Options, snapshot)
 		if snapshotOptions != "" {
 			content.WriteString(fmt.Sprintf("        options %s\n", snapshotOptions))
 		}
-		
+
 		content.WriteString("    }\n")
 	}
-	
+
 	content.WriteString("}\n")
-	
+
 	return content.String()
 }

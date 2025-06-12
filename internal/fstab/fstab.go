@@ -126,7 +126,7 @@ func (m *Manager) UpdateSnapshotFstabDiff(snapshot *btrfs.Snapshot, rootFS *btrf
 	if snapshot == nil || snapshot.Subvolume == nil {
 		return nil, fmt.Errorf("invalid snapshot provided")
 	}
-	
+
 	fstabPath := btrfs.GetSnapshotFstabPath(snapshot)
 	log.Debug().Str("path", fstabPath).Str("snapshot", snapshot.Path).Msg("Generating fstab diff")
 

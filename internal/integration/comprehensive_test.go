@@ -17,7 +17,7 @@ import (
 // - Existing menuentry options in refind.conf that match our root volume
 func TestComprehensiveMultiKernelMultiVolumeScenario(t *testing.T) {
 	tempDir := t.TempDir()
-	
+
 	// Create main refind.conf with existing menu entries
 	mainConfig := filepath.Join(tempDir, "refind.conf")
 	mainContent := `# rEFInd Configuration File
@@ -61,11 +61,11 @@ menuentry "Windows 11" {
 	if err := os.WriteFile(mainConfig, []byte(mainContent), 0644); err != nil {
 		t.Fatalf("Failed to create main config: %v", err)
 	}
-	
+
 	// Define test scenario data (not used in test but kept for documentation)
 	_ = struct {
-		kernels []KernelConfig
-		volumes []VolumeConfig
+		kernels     []KernelConfig
+		volumes     []VolumeConfig
 		directories []string
 	}{
 		kernels: []KernelConfig{
@@ -82,7 +82,7 @@ menuentry "Windows 11" {
 		},
 		directories: []string{
 			"EFI/Linux/mainline",
-			"EFI/Linux/lts", 
+			"EFI/Linux/lts",
 			"EFI/Linux/zen",
 			"EFI/Linux/hardened",
 			"kernels/mainline",
@@ -90,7 +90,7 @@ menuentry "Windows 11" {
 			"boot/kernels/custom",
 		},
 	}
-	
+
 	// Create refind_linux.conf files for different kernel/volume combinations
 	confFiles := map[string]RefindLinuxConf{
 		// Mainline kernel configurations
@@ -100,22 +100,22 @@ menuentry "Windows 11" {
 				{"Arch Linux (Mainline Debug)", "root=UUID=main-btrfs-uuid rootflags=subvol=@ rw debug"},
 			},
 		},
-		
-		// LTS kernel configurations  
+
+		// LTS kernel configurations
 		"EFI/Linux/lts/refind_linux.conf": {
 			entries: []RefindEntry{
 				{"Arch Linux LTS (Default)", "root=UUID=main-btrfs-uuid rootflags=subvol=@ rw quiet"},
 				{"Arch Linux LTS (Fallback)", "root=UUID=main-btrfs-uuid rootflags=subvol=@ rw systemd.unit=multi-user.target"},
 			},
 		},
-		
+
 		// Zen kernel with alternative volume
 		"EFI/Linux/zen/refind_linux.conf": {
 			entries: []RefindEntry{
 				{"Arch Linux Zen (Alt Volume)", "root=UUID=alt-btrfs-uuid rootflags=subvol=@alt rw quiet performance"},
 			},
 		},
-		
+
 		// Hardened kernel with PARTUUID
 		"EFI/Linux/hardened/refind_linux.conf": {
 			entries: []RefindEntry{
@@ -123,14 +123,14 @@ menuentry "Windows 11" {
 				{"Arch Hardened (Emergency)", "root=PARTUUID=MAIN-PARTUUID rootflags=subvol=@ rw systemd.unit=emergency.target"},
 			},
 		},
-		
+
 		// Kernel directory with LABEL
 		"kernels/mainline/refind_linux.conf": {
 			entries: []RefindEntry{
 				{"Arch Custom (LABEL)", "root=LABEL=ArchMain rootflags=subvol=@ rw quiet"},
 			},
 		},
-		
+
 		// Mixed volume types in one file
 		"kernels/lts/refind_linux.conf": {
 			entries: []RefindEntry{
@@ -139,7 +139,7 @@ menuentry "Windows 11" {
 				{"LTS Ubuntu (Non-btrfs)", "root=UUID=ubuntu-ext4-uuid rw"}, // Should be parsed but not processed for snapshots
 			},
 		},
-		
+
 		// Custom location with PARTLABEL
 		"boot/kernels/custom/refind_linux.conf": {
 			entries: []RefindEntry{
@@ -147,31 +147,31 @@ menuentry "Windows 11" {
 			},
 		},
 	}
-	
+
 	// Create all the refind_linux.conf files
 	for confPath, confData := range confFiles {
 		fullPath := filepath.Join(tempDir, confPath)
 		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
 			t.Fatalf("Failed to create directory for %s: %v", confPath, err)
 		}
-		
+
 		content := ""
 		for _, entry := range confData.entries {
 			content += "\"" + entry.title + "\" \"" + entry.options + "\"\n"
 		}
-		
+
 		if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
 			t.Fatalf("Failed to create %s: %v", confPath, err)
 		}
 	}
-	
+
 	// Parse configuration
 	parser := refind.NewParser(tempDir)
 	config, err := parser.ParseConfig(mainConfig)
 	if err != nil {
 		t.Fatalf("ParseConfig() error = %v", err)
 	}
-	
+
 	// Verify comprehensive parsing results
 	t.Run("verify_total_entries", func(t *testing.T) {
 		// Main config: 4 entries + refind_linux.conf entries: 12 entries = 16 total
@@ -181,7 +181,7 @@ menuentry "Windows 11" {
 			logAllEntries(t, config.Entries)
 		}
 	})
-	
+
 	t.Run("verify_main_config_entries", func(t *testing.T) {
 		mainConfigEntries := 0
 		for _, entry := range config.Entries {
@@ -194,7 +194,7 @@ menuentry "Windows 11" {
 			t.Errorf("Expected %d main config entries, got %d", expectedMainEntries, mainConfigEntries)
 		}
 	})
-	
+
 	t.Run("verify_refind_linux_entries", func(t *testing.T) {
 		refindLinuxEntries := 0
 		sourceFiles := make(map[string]int)
@@ -204,12 +204,12 @@ menuentry "Windows 11" {
 				sourceFiles[entry.SourceFile]++
 			}
 		}
-		
+
 		expectedRefindLinuxEntries := 12
 		if refindLinuxEntries != expectedRefindLinuxEntries {
 			t.Errorf("Expected %d refind_linux.conf entries, got %d", expectedRefindLinuxEntries, refindLinuxEntries)
 		}
-		
+
 		expectedFiles := 7
 		if len(sourceFiles) != expectedFiles {
 			t.Errorf("Expected entries from %d refind_linux.conf files, got %d", expectedFiles, len(sourceFiles))
@@ -218,7 +218,7 @@ menuentry "Windows 11" {
 			}
 		}
 	})
-	
+
 	t.Run("verify_volume_matching", func(t *testing.T) {
 		// Test entries that should match main-btrfs-uuid volume
 		mainVolumeEntries := 0
@@ -244,13 +244,13 @@ menuentry "Windows 11" {
 				}
 			}
 		}
-		
+
 		expectedMainVolumeEntries := 11 // 2 from main config + 9 from refind_linux.conf files
 		if mainVolumeEntries != expectedMainVolumeEntries {
 			t.Errorf("Expected %d entries matching main volume, got %d", expectedMainVolumeEntries, mainVolumeEntries)
 		}
 	})
-	
+
 	t.Run("verify_device_identifier_types", func(t *testing.T) {
 		deviceTypes := make(map[string]int)
 		for _, entry := range config.Entries {
@@ -266,21 +266,21 @@ menuentry "Windows 11" {
 				}
 			}
 		}
-		
+
 		expectedDeviceTypes := map[string]int{
 			"UUID":      11, // Most common
-			"PARTUUID":  2, // Hardened kernel
-			"LABEL":     1, // Custom kernel
-			"PARTLABEL": 1, // Custom kernel
+			"PARTUUID":  2,  // Hardened kernel
+			"LABEL":     1,  // Custom kernel
+			"PARTLABEL": 1,  // Custom kernel
 		}
-		
+
 		for devType, expectedCount := range expectedDeviceTypes {
 			if deviceTypes[devType] != expectedCount {
 				t.Errorf("Expected %d %s entries, got %d", expectedCount, devType, deviceTypes[devType])
 			}
 		}
 	})
-	
+
 	t.Run("verify_subvolume_variations", func(t *testing.T) {
 		subvolumes := make(map[string]int)
 		for _, entry := range config.Entries {
@@ -288,13 +288,13 @@ menuentry "Windows 11" {
 				subvolumes[entry.BootOptions.Subvol]++
 			}
 		}
-		
+
 		expectedSubvolumes := map[string]int{
 			"@":     11, // Main subvolume
-			"@alt":  1, // Alternative subvolume
-			"@test": 1, // Test subvolume
+			"@alt":  1,  // Alternative subvolume
+			"@test": 1,  // Test subvolume
 		}
-		
+
 		for subvol, expectedCount := range expectedSubvolumes {
 			if subvolumes[subvol] != expectedCount {
 				t.Errorf("Expected %d entries with subvol=%s, got %d", expectedCount, subvol, subvolumes[subvol])
@@ -347,13 +347,13 @@ func TestBootableEntryDetectionWithMultipleVolumes(t *testing.T) {
 	// Mock filesystem representing our root volume
 	rootFS := &mockFilesystem{
 		uuid:      "main-btrfs-uuid",
-		partuuid:  "MAIN-PARTUUID", 
+		partuuid:  "MAIN-PARTUUID",
 		label:     "ArchMain",
 		partlabel: "ARCH-MAIN",
 		device:    "/dev/mapper/luks-main",
 		subvol:    "@",
 	}
-	
+
 	testCases := []struct {
 		name     string
 		entry    *refind.MenuEntry
@@ -361,52 +361,52 @@ func TestBootableEntryDetectionWithMultipleVolumes(t *testing.T) {
 		reason   string
 	}{
 		{
-			name: "exact_uuid_match",
-			entry: createTestEntry("Test Entry", "root=UUID=main-btrfs-uuid rootflags=subvol=@"),
+			name:     "exact_uuid_match",
+			entry:    createTestEntry("Test Entry", "root=UUID=main-btrfs-uuid rootflags=subvol=@"),
 			expected: true,
-			reason: "UUID and subvolume match exactly",
+			reason:   "UUID and subvolume match exactly",
 		},
 		{
-			name: "partuuid_match",
-			entry: createTestEntry("Test Entry", "root=PARTUUID=MAIN-PARTUUID rootflags=subvol=@"),
+			name:     "partuuid_match",
+			entry:    createTestEntry("Test Entry", "root=PARTUUID=MAIN-PARTUUID rootflags=subvol=@"),
 			expected: true,
-			reason: "PARTUUID and subvolume match",
+			reason:   "PARTUUID and subvolume match",
 		},
 		{
-			name: "label_match", 
-			entry: createTestEntry("Test Entry", "root=LABEL=ArchMain rootflags=subvol=@"),
+			name:     "label_match",
+			entry:    createTestEntry("Test Entry", "root=LABEL=ArchMain rootflags=subvol=@"),
 			expected: true,
-			reason: "LABEL and subvolume match",
+			reason:   "LABEL and subvolume match",
 		},
 		{
-			name: "partlabel_match",
-			entry: createTestEntry("Test Entry", "root=PARTLABEL=ARCH-MAIN rootflags=subvol=@"),
+			name:     "partlabel_match",
+			entry:    createTestEntry("Test Entry", "root=PARTLABEL=ARCH-MAIN rootflags=subvol=@"),
 			expected: true,
-			reason: "PARTLABEL and subvolume match",
+			reason:   "PARTLABEL and subvolume match",
 		},
 		{
-			name: "device_path_match",
-			entry: createTestEntry("Test Entry", "root=/dev/mapper/luks-main rootflags=subvol=@"),
+			name:     "device_path_match",
+			entry:    createTestEntry("Test Entry", "root=/dev/mapper/luks-main rootflags=subvol=@"),
 			expected: true,
-			reason: "Device path and subvolume match",
+			reason:   "Device path and subvolume match",
 		},
 		{
-			name: "wrong_uuid",
-			entry: createTestEntry("Test Entry", "root=UUID=different-uuid rootflags=subvol=@"),
+			name:     "wrong_uuid",
+			entry:    createTestEntry("Test Entry", "root=UUID=different-uuid rootflags=subvol=@"),
 			expected: false,
-			reason: "UUID doesn't match",
+			reason:   "UUID doesn't match",
 		},
 		{
-			name: "wrong_subvolume",
-			entry: createTestEntry("Test Entry", "root=UUID=main-btrfs-uuid rootflags=subvol=@alt"),
+			name:     "wrong_subvolume",
+			entry:    createTestEntry("Test Entry", "root=UUID=main-btrfs-uuid rootflags=subvol=@alt"),
 			expected: false,
-			reason: "Subvolume doesn't match",
+			reason:   "Subvolume doesn't match",
 		},
 		{
-			name: "no_subvolume",
-			entry: createTestEntry("Test Entry", "root=UUID=main-btrfs-uuid"),
+			name:     "no_subvolume",
+			entry:    createTestEntry("Test Entry", "root=UUID=main-btrfs-uuid"),
 			expected: false,
-			reason: "No subvolume specified",
+			reason:   "No subvolume specified",
 		},
 		{
 			name: "no_boot_options",
@@ -415,22 +415,22 @@ func TestBootableEntryDetectionWithMultipleVolumes(t *testing.T) {
 				BootOptions: nil,
 			},
 			expected: false,
-			reason: "No boot options",
+			reason:   "No boot options",
 		},
 		{
-			name: "complex_options_match",
-			entry: createTestEntry("Complex", "root=UUID=main-btrfs-uuid rootflags=subvol=@ rw quiet splash"),
+			name:     "complex_options_match",
+			entry:    createTestEntry("Complex", "root=UUID=main-btrfs-uuid rootflags=subvol=@ rw quiet splash"),
 			expected: true,
-			reason: "Complex options with matching UUID and subvolume",
+			reason:   "Complex options with matching UUID and subvolume",
 		},
 		{
-			name: "encrypted_volume_uuid",
-			entry: createTestEntry("Encrypted", "cryptdevice=UUID=crypt-uuid:luks root=UUID=main-btrfs-uuid rootflags=subvol=@"),
+			name:     "encrypted_volume_uuid",
+			entry:    createTestEntry("Encrypted", "cryptdevice=UUID=crypt-uuid:luks root=UUID=main-btrfs-uuid rootflags=subvol=@"),
 			expected: true,
-			reason: "Encrypted setup with matching decrypted volume",
+			reason:   "Encrypted setup with matching decrypted volume",
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			result := mockIsBootableEntry(tc.entry, rootFS)
@@ -451,11 +451,11 @@ func createTestEntry(title, options string) *refind.MenuEntry {
 		Title:   title,
 		Options: options,
 	}
-	
+
 	// Parse boot options (simplified version for testing)
 	if options != "" {
 		entry.BootOptions = &refind.BootOptions{}
-		
+
 		// Extract root
 		if idx := strings.Index(options, "root="); idx != -1 {
 			start := idx + 5
@@ -467,7 +467,7 @@ func createTestEntry(title, options string) *refind.MenuEntry {
 			}
 			entry.BootOptions.Root = options[start:end]
 		}
-		
+
 		// Extract rootflags and subvol
 		if idx := strings.Index(options, "rootflags="); idx != -1 {
 			start := idx + 10
@@ -478,7 +478,7 @@ func createTestEntry(title, options string) *refind.MenuEntry {
 				end += start
 			}
 			entry.BootOptions.RootFlags = options[start:end]
-			
+
 			// Extract subvol from rootflags
 			if subvolIdx := strings.Index(entry.BootOptions.RootFlags, "subvol="); subvolIdx != -1 {
 				subvolStart := subvolIdx + 7
@@ -492,7 +492,7 @@ func createTestEntry(title, options string) *refind.MenuEntry {
 			}
 		}
 	}
-	
+
 	return entry
 }
 
@@ -529,22 +529,22 @@ func mockIsBootableEntry(entry *refind.MenuEntry, rootFS *mockFilesystem) bool {
 	if entry.BootOptions == nil {
 		return false
 	}
-	
+
 	if entry.BootOptions.Root == "" {
 		return false
 	}
-	
+
 	if entry.BootOptions.Subvol == "" {
 		return false
 	}
-	
+
 	if !rootFS.MatchesDevice(entry.BootOptions.Root) {
 		return false
 	}
-	
+
 	if entry.BootOptions.Subvol != rootFS.GetSubvolume().Path {
 		return false
 	}
-	
+
 	return true
 }
