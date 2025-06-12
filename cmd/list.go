@@ -6,6 +6,8 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"text/tabwriter"
 	"time"
 
@@ -15,11 +17,13 @@ import (
 	"github.com/spf13/viper"
 )
 
+const maxConcurrentSizeCalculations = 3
+
 var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List btrfs volumes and snapshots",
-	Long:  `List btrfs volumes and snapshots. Shows root filesystem snapshots by default.`,
-	RunE:  runList,
+	Long:  `List btrfs volumes and snapshots. Requires a subcommand (volumes or snapshots).`,
+	RunE:  runListRoot,
 }
 
 var listVolumesCmd = &cobra.Command{
@@ -27,7 +31,9 @@ var listVolumesCmd = &cobra.Command{
 	Short: "List all btrfs filesystems/volumes",
 	Long: `List all btrfs filesystems/volumes detected on the system.
 
-Shows device path, mount point, UUID, and other identifiers for each volume.`,
+Shows device path, mount point, and the best available identifier for each volume.
+The IDENTIFIER column shows the preferred identifier value, and TYPE shows what
+kind of identifier it is (UUID, PARTUUID, LABEL, PARTLABEL, or DEVICE).`,
 	RunE: runListVolumes,
 }
 
@@ -36,7 +42,12 @@ var listSnapshotsCmd = &cobra.Command{
 	Short: "List all snapshots for detected volumes",
 	Long: `List all snapshots for each detected btrfs volume.
 
-Shows snapshot path, creation time, size, and parent volume for each snapshot.`,
+Shows snapshot path, creation time, and parent volume for each snapshot.
+
+Size calculation (--show-size) performance:
+  • Fast: Uses btrfs quotas if already enabled
+  • Slower: Falls back to native file scanning with progress indicator
+  • Note: Large snapshots may take time to calculate`,
 	RunE: runListSnapshots,
 }
 
@@ -66,6 +77,15 @@ func init() {
 	viper.BindPFlag("list.format", listCmd.Flags().Lookup("format"))
 	viper.BindPFlag("list.show_size", listCmd.Flags().Lookup("show-size"))
 	viper.BindPFlag("list.search_dirs", listCmd.Flags().Lookup("search-dirs"))
+}
+
+func runListRoot(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("subcommand required. Use 'list volumes' or 'list snapshots'")
+	}
+
+	// This should not be reached due to cobra's command structure, but provide helpful message
+	return fmt.Errorf("unknown subcommand '%s'. Available subcommands: volumes, snapshots", args[0])
 }
 
 func runList(cmd *cobra.Command, args []string) error {
@@ -149,7 +169,7 @@ func displaySnapshotsTable(snapshots []*btrfs.Snapshot, showSize bool) error {
 		}
 
 		if showSize {
-			size := getSnapshotSize(snapshot.Path)
+			size := getSnapshotSize(snapshot)
 			fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\n",
 				snapshot.Path, created, snapshot.ID, readOnly, size)
 		} else {
@@ -214,13 +234,71 @@ func displaySnapshotsYAML(snapshots []*btrfs.Snapshot) error {
 	return nil
 }
 
-func getSnapshotSize(path string) string {
-	size, err := btrfs.GetSnapshotSize(path)
+func getSnapshotSize(snapshot *btrfs.Snapshot) string {
+	size, err := btrfs.GetSnapshotSize(snapshot.FilesystemPath)
 	if err != nil {
-		log.Debug().Err(err).Str("path", path).Msg("Failed to get snapshot size")
+		log.Debug().Err(err).Str("path", snapshot.FilesystemPath).Msg("Failed to get snapshot size")
 		return "N/A"
 	}
 	return size
+}
+
+// SnapshotProgress tracks progress for a single snapshot calculation
+type SnapshotProgress struct {
+	Index     int
+	FileCount int64
+	Path      string
+}
+
+// showParallelProgress displays progress indicators for parallel snapshot calculations
+func showParallelProgress(activeSnapshots *sync.Map, totalSnapshots int, done chan struct{}) {
+	spinner := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	i := 0
+
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			// Collect active snapshots
+			var active []*SnapshotProgress
+			activeSnapshots.Range(func(key, value interface{}) bool {
+				progress := value.(*SnapshotProgress)
+				active = append(active, progress)
+				return true
+			})
+
+			// Sort by index
+			sort.Slice(active, func(i, j int) bool {
+				return active[i].Index < active[j].Index
+			})
+
+			// Clear the entire line first
+			fmt.Print("\r\033[K")
+
+			if len(active) == 0 {
+				fmt.Printf("%s Preparing to calculate snapshot sizes...", spinner[i%len(spinner)])
+			} else {
+				// Show summary of active calculations
+				var summary strings.Builder
+				summary.WriteString(fmt.Sprintf("%s Calculating: ", spinner[i%len(spinner)]))
+				for idx, progress := range active {
+					if idx > 0 {
+						summary.WriteString(", ")
+					}
+					files := atomic.LoadInt64(&progress.FileCount)
+					summary.WriteString(fmt.Sprintf("snapshot %d/%d (%dk files)",
+						progress.Index, totalSnapshots, files/1000))
+				}
+				fmt.Print(summary.String())
+			}
+
+			i++
+		}
+	}
 }
 
 func runListVolumes(cmd *cobra.Command, args []string) error {
@@ -256,6 +334,12 @@ func runListVolumes(cmd *cobra.Command, args []string) error {
 func runListSnapshots(cmd *cobra.Command, args []string) error {
 	log.Info().Msg("Listing btrfs snapshots")
 
+	// Check flags
+	showSize, _ := cmd.Flags().GetBool("show-size")
+	if showSize {
+		log.Info().Msg("Calculating snapshot sizes...")
+	}
+
 	// Initialize btrfs manager
 	searchDirs := viper.GetStringSlice("snapshot.search_directories")
 	maxDepth := viper.GetInt("snapshot.max_depth")
@@ -274,7 +358,6 @@ func runListSnapshots(cmd *cobra.Command, args []string) error {
 
 	// Check flags
 	jsonOutput, _ := cmd.Flags().GetBool("json")
-	showSize, _ := cmd.Flags().GetBool("show-size")
 	showVolume, _ := cmd.Flags().GetBool("show-volume")
 	volumeFilter, _ := cmd.Flags().GetString("volume")
 
@@ -290,12 +373,25 @@ func runListSnapshots(cmd *cobra.Command, args []string) error {
 	// Find snapshots for each filesystem and deduplicate
 	var allSnapshots []*SnapshotInfo
 	seenSnapshots := make(map[string]bool) // Track by snapshot path to avoid duplicates
+	totalSnapshotsFound := 0
+	filesystemsWithSnapshots := 0
 
 	for _, fs := range filesystems {
 		snapshots, err := btrfsManager.FindSnapshots(fs)
 		if err != nil {
 			log.Warn().Err(err).Str("filesystem", fs.GetBestIdentifier()).Msg("Failed to find snapshots")
 			continue
+		}
+
+		if len(snapshots) > 0 {
+			filesystemsWithSnapshots++
+			totalSnapshotsFound += len(snapshots)
+
+			log.Debug().
+				Int("count", len(snapshots)).
+				Str("filesystem", fs.GetBestIdentifier()).
+				Str("id_type", fs.GetIdentifierType()).
+				Msg("Found snapshots for filesystem")
 		}
 
 		// Convert to SnapshotInfo with volume context
@@ -311,16 +407,63 @@ func runListSnapshots(cmd *cobra.Command, args []string) error {
 				Filesystem: fs,
 			}
 
-			// Get size if requested
-			if showSize {
-				if size, err := btrfs.GetSnapshotSize(snapshot.Path); err == nil {
-					info.Size = size
-				}
-			}
-
 			allSnapshots = append(allSnapshots, info)
 		}
 	}
+
+	// Calculate sizes after collecting all snapshots so we know the total count
+	if showSize {
+		// Start parallel progress indicator
+		done := make(chan struct{})
+		var activeSnapshots sync.Map
+
+		go showParallelProgress(&activeSnapshots, len(allSnapshots), done)
+
+		// Create worker pool for parallel size calculations
+		semaphore := make(chan struct{}, maxConcurrentSizeCalculations)
+		var wg sync.WaitGroup
+
+		for i, info := range allSnapshots {
+			wg.Add(1)
+			go func(index int, snapshot *SnapshotInfo) {
+				defer wg.Done()
+
+				// Acquire semaphore
+				semaphore <- struct{}{}
+				defer func() { <-semaphore }()
+
+				// Create progress tracker for this snapshot
+				progress := SnapshotProgress{
+					Index:     index + 1,
+					FileCount: 0,
+					Path:      snapshot.Snapshot.FilesystemPath,
+				}
+				activeSnapshots.Store(index, &progress)
+
+				// Calculate size
+				if size, err := btrfs.GetSnapshotSizeWithoutProgress(snapshot.Snapshot.FilesystemPath, &progress.FileCount); err == nil {
+					snapshot.Size = size
+				}
+
+				// Remove from active snapshots
+				activeSnapshots.Delete(index)
+			}(i, info)
+		}
+
+		// Wait for all calculations to complete
+		wg.Wait()
+
+		// Stop progress and clear line
+		close(done)
+		fmt.Print("\r\033[K")
+	}
+
+	// Log summary
+	log.Info().
+		Int("total_snapshots", len(allSnapshots)).
+		Int("filesystems_with_snapshots", filesystemsWithSnapshots).
+		Int("total_filesystems", len(filesystems)).
+		Msg("Snapshot discovery complete")
 
 	if len(allSnapshots) == 0 {
 		fmt.Println("No snapshots found")

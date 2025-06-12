@@ -2,14 +2,17 @@ package btrfs
 
 import (
 	"bufio"
+	"context"
 	"encoding/xml"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/runner"
@@ -163,7 +166,7 @@ func (m *Manager) FindSnapshots(fs *Filesystem) ([]*Snapshot, error) {
 		return allSnapshots[i].SnapshotTime.After(allSnapshots[j].SnapshotTime)
 	})
 
-	log.Info().Int("count", len(allSnapshots)).Str("filesystem", fs.GetBestIdentifier()).Str("id_type", fs.GetIdentifierType()).Msg("Found snapshots")
+	log.Debug().Int("count", len(allSnapshots)).Str("filesystem", fs.GetBestIdentifier()).Str("id_type", fs.GetIdentifierType()).Msg("Found snapshots")
 	return allSnapshots, nil
 }
 
@@ -794,8 +797,13 @@ func GetSnapshotFstabPath(snapshot *Snapshot) string {
 	return filepath.Join(snapshot.FilesystemPath, "etc", "fstab")
 }
 
-// GetSnapshotSize calculates the size of a snapshot using btrfs filesystem usage
+// GetSnapshotSize calculates the size of a snapshot using the most efficient method available
 func GetSnapshotSize(path string) (string, error) {
+	return GetSnapshotSizeWithProgress(path, 0, 0)
+}
+
+// GetSnapshotSizeWithProgress calculates the size of a snapshot with progress indication
+func GetSnapshotSizeWithProgress(path string, current, total int) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("path cannot be empty")
 	}
@@ -805,24 +813,255 @@ func GetSnapshotSize(path string) (string, error) {
 		return "", fmt.Errorf("path does not exist: %s", path)
 	}
 
-	cmd := exec.Command("btrfs", "filesystem", "usage", "-b", path)
-	output, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("failed to get filesystem usage: %w", err)
+	// Try qgroups first (fast) - only if quotas are already enabled
+	if size, err := getSnapshotSizeFromQgroups(path); err == nil {
+		return size, nil
 	}
 
-	// Parse the output to extract used space
-	lines := strings.Split(string(output), "\n")
+	// Fallback to native Go calculation with progress (slow but accurate)
+	return getSnapshotSizeNativeWithProgress(path, current, total)
+}
+
+// GetSnapshotSizeWithoutProgress calculates the size of a snapshot using external file counter
+func GetSnapshotSizeWithoutProgress(path string, fileCount *int64) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("path cannot be empty")
+	}
+
+	// Check if path exists
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return "", fmt.Errorf("path does not exist: %s", path)
+	}
+
+	// Try qgroups first (fast) - only if quotas are already enabled
+	if size, err := getSnapshotSizeFromQgroups(path); err == nil {
+		return size, nil
+	}
+
+	// Fallback to native Go calculation without internal progress (slow but accurate)
+	return getSnapshotSizeNativeExternal(path, fileCount)
+}
+
+// getSnapshotSizeFromQgroups tries to get snapshot size using btrfs qgroups (fast)
+// Only attempts if quotas are already enabled
+func getSnapshotSizeFromQgroups(path string) (string, error) {
+	// First, check if quotas are enabled by checking filesystem features
+	// This is faster than trying qgroup show and getting an error
+	cmd := exec.Command("btrfs", "filesystem", "show")
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("btrfs not available")
+	}
+
+	// Quick check: try to list qgroups without stderr to avoid noise
+	cmd = exec.Command("btrfs", "qgroup", "show", path)
+	output, err := cmd.Output()
+	if err != nil {
+		// Quotas not enabled - this is expected and not an error we should log
+		return "", fmt.Errorf("quotas not enabled")
+	}
+
+	// Check for inconsistent qgroup data warning
+	outputStr := string(output)
+	if strings.Contains(outputStr, "qgroup data inconsistent") || strings.Contains(outputStr, "0.00B") {
+		return "", fmt.Errorf("qgroup data inconsistent or incomplete")
+	}
+
+	// Get the subvolume ID for this path
+	subvolCmd := exec.Command("btrfs", "subvolume", "show", path)
+	subvolOutput, err := subvolCmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to get subvolume info: %w", err)
+	}
+
+	// Parse subvolume ID from output
+	subvolID := ""
+	lines := strings.Split(string(subvolOutput), "\n")
 	for _, line := range lines {
-		if strings.Contains(line, "Used:") {
+		if strings.Contains(line, "Subvolume ID:") {
 			parts := strings.Fields(line)
-			if len(parts) >= 2 {
-				return parts[1], nil
+			if len(parts) >= 3 {
+				subvolID = parts[2]
+				break
 			}
 		}
 	}
 
-	return "", fmt.Errorf("could not parse filesystem usage output")
+	if subvolID == "" {
+		return "", fmt.Errorf("could not find subvolume ID")
+	}
+
+	// Parse qgroup output to find our subvolume's exclusive size
+	qgroupLines := strings.Split(string(output), "\n")
+	for _, line := range qgroupLines {
+		if strings.Contains(line, "0/"+subvolID) {
+			parts := strings.Fields(line)
+			if len(parts) >= 3 {
+				// Return exclusive size (3rd column)
+				return parts[2], nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("subvolume not found in qgroups")
+}
+
+// getSnapshotSizeNativeWithProgress calculates snapshot size using native Go with progress indication
+func getSnapshotSizeNativeWithProgress(path string, current, total int) (string, error) {
+	var totalSize int64
+	var fileCount int64
+
+	// Start a goroutine for progress indication
+	done := make(chan struct{})
+	defer close(done)
+
+	go showProgressWithSnapshot(&fileCount, current, total, done)
+
+	// Use timeout to prevent hanging on large snapshots
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	err := filepath.WalkDir(path, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			// Skip inaccessible files/directories instead of failing
+			return nil
+		}
+
+		// Check for timeout
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		if !d.IsDir() {
+			if info, err := d.Info(); err == nil {
+				atomic.AddInt64(&totalSize, info.Size())
+			}
+		}
+		atomic.AddInt64(&fileCount, 1)
+		return nil
+	})
+
+	// Clear progress line only at the end
+	fmt.Print("\r\033[K")
+
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "timeout", nil
+		}
+		return "", fmt.Errorf("failed to calculate size: %w", err)
+	}
+
+	duration := time.Since(start)
+	log.Debug().
+		Int64("total_size", totalSize).
+		Int64("file_count", fileCount).
+		Dur("duration", duration).
+		Str("path", path).
+		Msg("Completed size calculation")
+
+	return formatBytes(totalSize), nil
+}
+
+// getSnapshotSizeNativeExternal calculates snapshot size using native Go with external file counter
+func getSnapshotSizeNativeExternal(path string, externalFileCount *int64) (string, error) {
+	var totalSize int64
+
+	// Use timeout to prevent hanging on large snapshots
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	err := filepath.WalkDir(path, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			// Skip inaccessible files/directories instead of failing
+			return nil
+		}
+
+		// Check for timeout
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		if !d.IsDir() {
+			if info, err := d.Info(); err == nil {
+				atomic.AddInt64(&totalSize, info.Size())
+			}
+		}
+		atomic.AddInt64(externalFileCount, 1)
+		return nil
+	})
+
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "timeout", nil
+		}
+		return "", fmt.Errorf("failed to calculate size: %w", err)
+	}
+
+	duration := time.Since(start)
+	log.Debug().
+		Int64("total_size", totalSize).
+		Int64("file_count", atomic.LoadInt64(externalFileCount)).
+		Dur("duration", duration).
+		Str("path", path).
+		Msg("Completed size calculation")
+
+	return formatBytes(totalSize), nil
+}
+
+// showProgressWithSnapshot displays a rotating spinner with file count and snapshot progress
+func showProgressWithSnapshot(fileCount *int64, current, total int, done chan struct{}) {
+	spinner := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	i := 0
+
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			count := atomic.LoadInt64(fileCount)
+			if total > 0 {
+				fmt.Printf("\r%s Calculating snapshot sizes... (%d/%d snapshots, %d files in current)",
+					spinner[i%len(spinner)], current, total, count)
+			} else {
+				fmt.Printf("\r%s Calculating snapshot size... (%d files processed)",
+					spinner[i%len(spinner)], count)
+			}
+			i++
+		}
+	}
+}
+
+// formatBytes converts bytes to human-readable format
+func formatBytes(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+
+	units := []string{"B", "KiB", "MiB", "GiB", "TiB", "PiB"}
+	if exp >= len(units) {
+		exp = len(units) - 1
+		div = int64(1)
+		for i := 0; i < exp; i++ {
+			div *= unit
+		}
+	}
+
+	return fmt.Sprintf("%.1f %s", float64(bytes)/float64(div), units[exp])
 }
 
 // CleanupOldSnapshots removes old writable snapshots from the destination directory
