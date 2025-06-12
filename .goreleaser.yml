@@ -58,14 +58,14 @@ changelog:
 #       (prefix/"systemd").install "systemd/refind-btrfs-snapshots.path"
 
 aurs:
-  - name: refind-btrfs-snapshots
+  - name: refind-btrfs-snapshots-bin
     homepage: "https://github.com/jmylchreest/refind-btrfs-snapshots"
     description: "Generate rEFInd boot entries for btrfs snapshots"
     maintainers:
       - "John Mylchreest <jmylchreest at gmail dot com>"
     license: "GPL3"
     private_key: "{{ .Env.AUR_KEY }}"
-    git_url: "ssh://aur@aur.archlinux.org/refind-btrfs-snapshots.git"
+    git_url: "ssh://aur@aur.archlinux.org/refind-btrfs-snapshots-bin.git"
     depends:
       - btrfs-progs
       - util-linux
