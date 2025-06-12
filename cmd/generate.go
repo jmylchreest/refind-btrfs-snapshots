@@ -19,7 +19,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"os/user"
 	"path/filepath"
 	"sort"
@@ -111,26 +110,26 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to detect ESP: %w", err)
 		}
-		
+
 		if esp.MountPoint == "" {
 			return fmt.Errorf("ESP is not mounted")
 		}
-		
+
 		espPath = esp.MountPoint
 		log.Info().Str("path", espPath).Msg("Auto-detected ESP path")
-		
+
 		// Validate ESP access using the detected ESP
-		if err := validateESPAccess(esp, r); err != nil {
+		detector := device.NewESPDetector("")
+		if err := detector.ValidateESPAccess(); err != nil {
 			return fmt.Errorf("ESP validation failed: %w", err)
 		}
 	} else if viper.GetString("esp.mount_point") != "" {
 		espPath = viper.GetString("esp.mount_point")
 		log.Info().Str("path", espPath).Msg("Using configured ESP path")
-		
+
 		// Validate manually configured ESP path
-		// Create an ESP struct from the configured path for validation
-		configuredESP := &device.ESP{MountPoint: espPath}
-		if err := validateESPAccess(configuredESP, r); err != nil {
+		detector := device.NewESPDetector(espPath)
+		if err := detector.ValidateESPAccess(); err != nil {
 			return fmt.Errorf("ESP validation failed: %w", err)
 		}
 	} else {
@@ -358,7 +357,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 			unifiedPatch.AddFile(configDiff)
 			operationSummary.UpdatedConfigs = append(operationSummary.UpdatedConfigs, configDiff.Path)
 			updatedRefindLinuxConf = true
-			
+
 			// Since we're adding configs, record that snapshots are being added
 			for _, snapshot := range processedSnapshots {
 				snapshotDisplayName := snapshot.SnapshotTime.Format("2006-01-02_15-04-05")
@@ -395,7 +394,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		} else if configDiff != nil {
 			unifiedPatch.AddFile(configDiff)
 			operationSummary.UpdatedConfigs = append(operationSummary.UpdatedConfigs, configDiff.Path)
-			
+
 			// Since we're adding configs, record that snapshots are being added (avoid duplicates)
 			if len(operationSummary.AddedSnapshots) == 0 {
 				for _, snapshot := range processedSnapshots {
@@ -422,7 +421,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		snapshotDisplayName := snapshot.SnapshotTime.Format("2006-01-02_15-04-05")
 		operationSummary.IncludedSnapshots = append(operationSummary.IncludedSnapshots, snapshotDisplayName)
 	}
-	
+
 	// AddedSnapshots will be populated when configs are actually updated
 
 	// Show unified diff and ask for confirmation
@@ -586,45 +585,6 @@ func checkRootPrivileges() error {
 	if currentUser.Uid != "0" {
 		return fmt.Errorf("not running as root (UID: %s)", currentUser.Uid)
 	}
-
-	return nil
-}
-
-// validateESPAccess validates ESP access using an already discovered ESP
-func validateESPAccess(esp *device.ESP, r runner.Runner) error {
-	if esp.MountPoint == "" {
-		return fmt.Errorf("ESP is not mounted")
-	}
-
-	// Check if the mount point exists and is accessible
-	info, err := os.Stat(esp.MountPoint)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("ESP mount point %s does not exist", esp.MountPoint)
-		}
-		return fmt.Errorf("ESP mount point %s is not accessible: %w", esp.MountPoint, err)
-	}
-
-	if !info.IsDir() {
-		return fmt.Errorf("ESP mount point %s is not a directory", esp.MountPoint)
-	}
-
-	// Skip write test if in dry-run mode
-	if !r.IsDryRun() {
-		// Check write permissions by attempting to create a temporary file
-		testFile := esp.MountPoint + "/.refind-btrfs-test"
-		file, err := os.Create(testFile)
-		if err != nil {
-			return fmt.Errorf("ESP mount point %s is not writable: %w", esp.MountPoint, err)
-		}
-		file.Close()
-		os.Remove(testFile)
-	}
-
-	log.Debug().
-		Str("mountpoint", esp.MountPoint).
-		Bool("read_only_check", r.IsDryRun()).
-		Msg("ESP access validated")
 
 	return nil
 }

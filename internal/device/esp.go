@@ -392,18 +392,9 @@ func (d *ESPDetector) GetESPMountPoint() (string, error) {
 	return esp.MountPoint, nil
 }
 
-// ValidateESPAccess checks if the ESP is accessible and writable
+// ValidateESPAccess checks if the ESP is accessible
+// Write permission issues will be handled during actual file operations
 func (d *ESPDetector) ValidateESPAccess() error {
-	return d.validateESPAccess(false)
-}
-
-// ValidateESPAccessReadOnly checks if the ESP is accessible (without write test)
-func (d *ESPDetector) ValidateESPAccessReadOnly() error {
-	return d.validateESPAccess(true)
-}
-
-// validateESPAccess checks if the ESP is accessible and optionally writable
-func (d *ESPDetector) validateESPAccess(readOnly bool) error {
 	esp, err := d.FindESP()
 	if err != nil {
 		return err
@@ -426,21 +417,8 @@ func (d *ESPDetector) validateESPAccess(readOnly bool) error {
 		return fmt.Errorf("ESP mount point %s is not a directory", esp.MountPoint)
 	}
 
-	// Skip write test if in read-only mode (e.g., dry run)
-	if !readOnly {
-		// Check write permissions by attempting to create a temporary file
-		testFile := esp.MountPoint + "/.refind-btrfs-test"
-		file, err := os.Create(testFile)
-		if err != nil {
-			return fmt.Errorf("ESP mount point %s is not writable: %w", esp.MountPoint, err)
-		}
-		file.Close()
-		os.Remove(testFile)
-	}
-
 	log.Debug().
 		Str("mountpoint", esp.MountPoint).
-		Bool("read_only_check", readOnly).
 		Msg("ESP access validated")
 
 	return nil

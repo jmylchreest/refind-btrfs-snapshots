@@ -33,7 +33,7 @@ func TestNewESPDetector(t *testing.T) {
 
 func TestESPDetector_ValidateESPAccess(t *testing.T) {
 	detector := NewESPDetector("")
-	
+
 	// This test is hard to run reliably without an actual ESP
 	// In most test environments, this will fail to find an ESP, which is expected
 	err := detector.ValidateESPAccess()
@@ -45,27 +45,13 @@ func TestESPDetector_ValidateESPAccess(t *testing.T) {
 	}
 }
 
-func TestESPDetector_ValidateESPAccessReadOnly(t *testing.T) {
-	detector := NewESPDetector("")
-	
-	// This test is hard to run reliably without an actual ESP
-	// In most test environments, this will fail to find an ESP, which is expected
-	err := detector.ValidateESPAccessReadOnly()
-	// We expect this to fail in test environments
-	if err == nil {
-		t.Log("ValidateESPAccessReadOnly() succeeded (probably running on a system with ESP)")
-	} else {
-		t.Log("ValidateESPAccessReadOnly() failed as expected in test environment")
-	}
-}
-
 func TestESPDetector_GetESPMountPoint(t *testing.T) {
 	detector := NewESPDetector("")
-	
+
 	// This test is tricky because it depends on the actual system state
 	// We'll test that it doesn't panic and returns either a valid path or an error
 	mountPoint, err := detector.GetESPMountPoint()
-	
+
 	// In most test environments, this will fail to find an ESP, which is expected
 	if err != nil {
 		// This is expected in test environments
