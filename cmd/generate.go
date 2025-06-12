@@ -26,8 +26,8 @@ import (
 	"strings"
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
-	"github.com/jmylchreest/refind-btrfs-snapshots/internal/device"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/diff"
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/esp"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/fstab"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/refind"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/runner"
@@ -101,25 +101,25 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 
 	// Detect ESP
 	espUUID := viper.GetString("esp.uuid")
-	espDetector := device.NewESPDetector(espUUID)
+	espDetector := esp.NewESPDetector(espUUID)
 
 	var espPath string
 	if viper.GetBool("esp.auto_detect") {
 		// Find ESP once and reuse the result
-		esp, err := espDetector.FindESP()
+		detectedESP, err := espDetector.FindESP()
 		if err != nil {
 			return fmt.Errorf("failed to detect ESP: %w", err)
 		}
 
-		if esp.MountPoint == "" {
+		if detectedESP.MountPoint == "" {
 			return fmt.Errorf("ESP is not mounted")
 		}
 
-		espPath = esp.MountPoint
+		espPath = detectedESP.MountPoint
 		log.Info().Str("path", espPath).Msg("Auto-detected ESP path")
 
 		// Validate ESP access using the detected ESP
-		detector := device.NewESPDetector("")
+		detector := esp.NewESPDetector("")
 		if err := detector.ValidateESPAccess(); err != nil {
 			return fmt.Errorf("ESP validation failed: %w", err)
 		}
@@ -128,7 +128,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		log.Info().Str("path", espPath).Msg("Using configured ESP path")
 
 		// Validate manually configured ESP path
-		detector := device.NewESPDetector(espPath)
+		detector := esp.NewESPDetector(espPath)
 		if err := detector.ValidateESPAccess(); err != nil {
 			return fmt.Errorf("ESP validation failed: %w", err)
 		}

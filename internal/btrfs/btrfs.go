@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/esp"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/runner"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/viper"
@@ -76,13 +77,6 @@ type MountInfo struct {
 }
 
 // DeviceIdentifiers holds various ways to identify a device
-type DeviceIdentifiers struct {
-	UUID      string
-	PartUUID  string
-	Label     string
-	PartLabel string
-}
-
 // Manager handles btrfs filesystem operations
 type Manager struct {
 	searchDirs []string
@@ -362,8 +356,8 @@ func (m *Manager) getMountedFilesystems() ([]*MountInfo, error) {
 }
 
 // getDeviceIdentifiers gets various identifiers for a device using /dev/disk/by-* directories
-func (m *Manager) getDeviceIdentifiers(device string) *DeviceIdentifiers {
-	identifiers := &DeviceIdentifiers{}
+func (m *Manager) getDeviceIdentifiers(device string) *esp.DeviceIdentifiers {
+	identifiers := &esp.DeviceIdentifiers{}
 
 	// Get the real device path by resolving any symlinks
 	realDevice, err := filepath.EvalSymlinks(device)
@@ -411,77 +405,41 @@ func (m *Manager) findIdentifierInDir(byDir, targetDevice string) string {
 
 // GetBestIdentifier returns the best available identifier for the filesystem (UUID > PartUUID > Label > PartLabel > Device)
 func (f *Filesystem) GetBestIdentifier() string {
-	if f.UUID != "" {
-		return f.UUID
+	identifiers := esp.DeviceIdentifiers{
+		UUID:      f.UUID,
+		PartUUID:  f.PartUUID,
+		Label:     f.Label,
+		PartLabel: f.PartLabel,
+		Device:    f.Device,
 	}
-	if f.PartUUID != "" {
-		return f.PartUUID
-	}
-	if f.Label != "" {
-		return f.Label
-	}
-	if f.PartLabel != "" {
-		return f.PartLabel
-	}
-	return f.Device
+
+	return identifiers.GetBestIdentifier()
 }
 
 // GetIdentifierType returns the type of the best available identifier
 func (f *Filesystem) GetIdentifierType() string {
-	if f.UUID != "" {
-		return "UUID"
+	identifiers := esp.DeviceIdentifiers{
+		UUID:      f.UUID,
+		PartUUID:  f.PartUUID,
+		Label:     f.Label,
+		PartLabel: f.PartLabel,
+		Device:    f.Device,
 	}
-	if f.PartUUID != "" {
-		return "PARTUUID"
-	}
-	if f.Label != "" {
-		return "LABEL"
-	}
-	if f.PartLabel != "" {
-		return "PARTLABEL"
-	}
-	return "DEVICE"
+
+	return identifiers.GetIdentifierType()
 }
 
 // MatchesDevice checks if a device specification matches this filesystem using any available identifier
 func (f *Filesystem) MatchesDevice(device string) bool {
-	// Handle UUID specification
-	if strings.HasPrefix(device, "UUID=") {
-		uuid := strings.TrimPrefix(device, "UUID=")
-		return f.UUID != "" && uuid == f.UUID
+	identifiers := esp.DeviceIdentifiers{
+		UUID:      f.UUID,
+		PartUUID:  f.PartUUID,
+		Label:     f.Label,
+		PartLabel: f.PartLabel,
+		Device:    f.Device,
 	}
 
-	// Handle PARTUUID specification
-	if strings.HasPrefix(device, "PARTUUID=") {
-		partuuid := strings.TrimPrefix(device, "PARTUUID=")
-		return f.PartUUID != "" && partuuid == f.PartUUID
-	}
-
-	// Handle LABEL specification
-	if strings.HasPrefix(device, "LABEL=") {
-		label := strings.TrimPrefix(device, "LABEL=")
-		return f.Label != "" && label == f.Label
-	}
-
-	// Handle PARTLABEL specification
-	if strings.HasPrefix(device, "PARTLABEL=") {
-		partlabel := strings.TrimPrefix(device, "PARTLABEL=")
-		return f.PartLabel != "" && partlabel == f.PartLabel
-	}
-
-	// Handle device path - check exact match
-	if device == f.Device {
-		return true
-	}
-
-	// For encrypted devices, also check alternative identifiers
-	// e.g., /dev/mapper/luks-... might be specified as UUID= in config
-	if strings.Contains(f.Device, "/dev/mapper/luks-") {
-		// The device in config might be specified by UUID/PARTUUID/etc instead of mapper path
-		// This is already handled by the checks above
-	}
-
-	return false
+	return identifiers.Matches(device)
 }
 
 // getRootSubvolume gets information about the root subvolume of a filesystem
