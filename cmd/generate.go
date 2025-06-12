@@ -118,9 +118,8 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		espPath = detectedESP.MountPoint
 		log.Info().Str("path", espPath).Msg("Auto-detected ESP path")
 
-		// Validate ESP access using the detected ESP
-		detector := esp.NewESPDetector("")
-		if err := detector.ValidateESPAccess(); err != nil {
+		// Validate ESP access using the detected ESP path
+		if err := espDetector.ValidateESPPath(detectedESP.MountPoint); err != nil {
 			return fmt.Errorf("ESP validation failed: %w", err)
 		}
 	} else if viper.GetString("esp.mount_point") != "" {
@@ -128,8 +127,8 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		log.Info().Str("path", espPath).Msg("Using configured ESP path")
 
 		// Validate manually configured ESP path
-		detector := esp.NewESPDetector(espPath)
-		if err := detector.ValidateESPAccess(); err != nil {
+		detector := esp.NewESPDetector("")
+		if err := detector.ValidateESPPath(espPath); err != nil {
 			return fmt.Errorf("ESP validation failed: %w", err)
 		}
 	} else {

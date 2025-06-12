@@ -404,21 +404,30 @@ func (d *ESPDetector) ValidateESPAccess() error {
 		return fmt.Errorf("ESP is not mounted")
 	}
 
+	return d.ValidateESPPath(esp.MountPoint)
+}
+
+// ValidateESPPath validates access to a specific ESP path without re-detection
+func (d *ESPDetector) ValidateESPPath(espPath string) error {
+	if espPath == "" {
+		return fmt.Errorf("ESP path cannot be empty")
+	}
+
 	// Check if the mount point exists and is accessible
-	info, err := os.Stat(esp.MountPoint)
+	info, err := os.Stat(espPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("ESP mount point %s does not exist", esp.MountPoint)
+			return fmt.Errorf("ESP mount point %s does not exist", espPath)
 		}
-		return fmt.Errorf("ESP mount point %s is not accessible: %w", esp.MountPoint, err)
+		return fmt.Errorf("ESP mount point %s is not accessible: %w", espPath, err)
 	}
 
 	if !info.IsDir() {
-		return fmt.Errorf("ESP mount point %s is not a directory", esp.MountPoint)
+		return fmt.Errorf("ESP mount point %s is not a directory", espPath)
 	}
 
 	log.Debug().
-		Str("mountpoint", esp.MountPoint).
+		Str("mountpoint", espPath).
 		Msg("ESP access validated")
 
 	return nil
