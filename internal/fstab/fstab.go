@@ -252,7 +252,6 @@ func (m *Manager) updateSnapshotFstab(snapshot *btrfs.Snapshot, rootFS *btrfs.Fi
 		return fmt.Errorf("failed to write updated fstab: %w", err)
 	}
 
-	log.Info().Str("path", fstabPath).Msg("Updated snapshot fstab")
 	return nil
 }
 
