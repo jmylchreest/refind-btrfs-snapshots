@@ -82,7 +82,7 @@ aurs:
       install -Dm755 ./refind-btrfs-snapshots "${pkgdir}/usr/bin/refind-btrfs-snapshots"
 
       # configuration
-      install -Dm644 ./configs/refind-btrfs-snapshots.yaml "${pkgdir}/etc/refind-btrfs-snapshots.conf"
+      install -Dm644 ./configs/refind-btrfs-snapshots.yaml "${pkgdir}/etc/refind-btrfs-snapshots.yaml"
 
       # systemd units
       install -Dm644 ./systemd/refind-btrfs-snapshots.service "${pkgdir}/usr/lib/systemd/system/refind-btrfs-snapshots.service"
