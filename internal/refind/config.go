@@ -10,6 +10,7 @@ import (
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/diff"
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/params"
 	"github.com/rs/zerolog/log"
 )
 
@@ -336,27 +337,22 @@ func (p *Parser) parseSubmenuDirective(submenu *SubmenuEntry, line string) {
 // parseBootOptions parses boot options string into structured data
 func parseBootOptions(options string) *BootOptions {
 	bootOpts := &BootOptions{}
+	parser := params.NewBootOptionsParser()
 
 	// Extract root parameter
-	if root := extractParameter(options, "root"); root != "" {
+	if root := parser.SpaceParser.Extract(options, "root"); root != "" {
 		bootOpts.Root = root
 	}
 
-	// Extract rootflags parameter
-	if rootflags := extractParameter(options, "rootflags"); rootflags != "" {
+	// Extract rootflags parameter and parse subvol/subvolid
+	if rootflags := parser.ExtractRootFlags(options); rootflags != "" {
 		bootOpts.RootFlags = rootflags
-
-		// Extract subvol and subvolid from rootflags
-		if subvol := extractSubParameter(rootflags, "subvol"); subvol != "" {
-			bootOpts.Subvol = subvol
-		}
-		if subvolid := extractSubParameter(rootflags, "subvolid"); subvolid != "" {
-			bootOpts.SubvolID = subvolid
-		}
+		bootOpts.Subvol = parser.ExtractSubvol(rootflags)
+		bootOpts.SubvolID = parser.ExtractSubvolID(rootflags)
 	}
 
 	// Extract initrd parameter
-	if initrd := extractParameter(options, "initrd"); initrd != "" {
+	if initrd := parser.SpaceParser.Extract(options, "initrd"); initrd != "" {
 		bootOpts.InitrdPath = initrd
 	}
 
@@ -531,25 +527,21 @@ func (g *Generator) updateOptionsForSnapshot(originalOptions string, snapshot *b
 		return ""
 	}
 
+	parser := params.NewBootOptionsParser()
 	options := originalOptions
 
 	// Update rootflags subvol parameter
-	subvolPattern := regexp.MustCompile(`subvol=([^,\s]+)`)
-	options = subvolPattern.ReplaceAllString(options, fmt.Sprintf("subvol=%s", snapshot.Path))
+	options = parser.UpdateSubvol(options, snapshot.Path)
 
-	// Update rootflags subvolid parameter
-	subvolidPattern := regexp.MustCompile(`subvolid=([^,\s]+)`)
-	options = subvolidPattern.ReplaceAllString(options, fmt.Sprintf("subvolid=%d", snapshot.ID))
+	// Update rootflags subvolid parameter  
+	options = parser.UpdateSubvolID(options, fmt.Sprintf("%d", snapshot.ID))
 
 	// Update initrd path if present
-	initrdPattern := regexp.MustCompile(`initrd=([^\s]+)`)
-	matches := initrdPattern.FindStringSubmatch(options)
-	if len(matches) > 1 {
-		originalInitrdPath := matches[1]
-		newInitrdPath := g.updatePathForSnapshot(originalInitrdPath, snapshot)
+	if initrd := parser.SpaceParser.Extract(options, "initrd"); initrd != "" {
+		newInitrdPath := g.updatePathForSnapshot(initrd, snapshot)
 		// Convert forward slashes to backslashes for Windows-style paths in options
 		newInitrdPath = strings.ReplaceAll(newInitrdPath, "/", "\\")
-		options = initrdPattern.ReplaceAllString(options, fmt.Sprintf("initrd=%s", newInitrdPath))
+		options = parser.SpaceParser.Update(options, "initrd", newInitrdPath)
 	}
 
 	return options

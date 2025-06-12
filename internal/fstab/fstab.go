@@ -9,6 +9,7 @@ import (
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/diff"
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/params"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/runner"
 	"github.com/rs/zerolog/log"
 )
@@ -298,70 +299,19 @@ func (m *Manager) updateRootEntry(entry *Entry, snapshot *btrfs.Snapshot, rootFS
 
 // updateSubvolOption updates the subvol option in mount options
 func (m *Manager) updateSubvolOption(options, newSubvol string) string {
-	// Pattern to match subvol=value
-	subvolPattern := regexp.MustCompile(`subvol=([^,\s]+)`)
-
-	if subvolPattern.MatchString(options) {
-		// Replace existing subvol option
-		return subvolPattern.ReplaceAllString(options, fmt.Sprintf("subvol=%s", newSubvol))
-	}
-
-	// Add subvol option if not present
-	if options == "" {
-		return fmt.Sprintf("subvol=%s", newSubvol)
-	}
-	return fmt.Sprintf("%s,subvol=%s", options, newSubvol)
+	parser := params.NewCommaParameterParser()
+	return parser.Update(options, "subvol", newSubvol)
 }
 
 // updateSubvolidOption updates the subvolid option in mount options
 func (m *Manager) updateSubvolidOption(options string, newSubvolid uint64) string {
-	// Pattern to match subvolid=value
-	subvolidPattern := regexp.MustCompile(`subvolid=([^,\s]+)`)
-
-	if subvolidPattern.MatchString(options) {
-		// Replace existing subvolid option
-		return subvolidPattern.ReplaceAllString(options, fmt.Sprintf("subvolid=%d", newSubvolid))
-	}
-
-	// Add subvolid option if not present
-	if options == "" {
-		return fmt.Sprintf("subvolid=%d", newSubvolid)
-	}
-	return fmt.Sprintf("%s,subvolid=%d", options, newSubvolid)
+	parser := params.NewCommaParameterParser()
+	return parser.Update(options, "subvolid", fmt.Sprintf("%d", newSubvolid))
 }
 
 // deviceMatches checks if the fstab device specification matches the filesystem
 func (m *Manager) deviceMatches(device string, rootFS *btrfs.Filesystem) bool {
-	// Handle UUID specification
-	if strings.HasPrefix(device, "UUID=") {
-		uuid := strings.TrimPrefix(device, "UUID=")
-		return rootFS.UUID != "" && uuid == rootFS.UUID
-	}
-
-	// Handle PARTUUID specification
-	if strings.HasPrefix(device, "PARTUUID=") {
-		partuuid := strings.TrimPrefix(device, "PARTUUID=")
-		return rootFS.PartUUID != "" && partuuid == rootFS.PartUUID
-	}
-
-	// Handle LABEL specification
-	if strings.HasPrefix(device, "LABEL=") {
-		label := strings.TrimPrefix(device, "LABEL=")
-		return rootFS.Label != "" && label == rootFS.Label
-	}
-
-	// Handle PARTLABEL specification
-	if strings.HasPrefix(device, "PARTLABEL=") {
-		partlabel := strings.TrimPrefix(device, "PARTLABEL=")
-		return rootFS.PartLabel != "" && partlabel == rootFS.PartLabel
-	}
-
-	// Handle device path
-	if device == rootFS.Device {
-		return true
-	}
-
-	return false
+	return rootFS.MatchesDevice(device)
 }
 
 // isValidDeviceSpec checks if a device specification is valid

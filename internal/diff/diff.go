@@ -52,21 +52,39 @@ func (fd *FileDiff) generateNewFileDiff() string {
 
 // generateUnifiedDiff creates a unified diff between original and modified content
 func (fd *FileDiff) generateUnifiedDiff() string {
-	originalLines := strings.Split(fd.Original, "\n")
-	modifiedLines := strings.Split(fd.Modified, "\n")
-
-	// Remove empty line at end if original doesn't end with newline
-	if fd.Original != "" && !strings.HasSuffix(fd.Original, "\n") {
-		originalLines = originalLines[:len(originalLines)-1]
+	var originalLines, modifiedLines []string
+	
+	if fd.Original == "" {
+		originalLines = []string{}
+	} else if strings.HasSuffix(fd.Original, "\n") {
+		originalLines = strings.Split(fd.Original, "\n")
+		originalLines = originalLines[:len(originalLines)-1] // Remove empty line at end
+	} else {
+		originalLines = strings.Split(fd.Original, "\n")
 	}
-	if fd.Modified != "" && !strings.HasSuffix(fd.Modified, "\n") {
-		modifiedLines = modifiedLines[:len(modifiedLines)-1]
+	
+	if fd.Modified == "" {
+		modifiedLines = []string{}
+	} else if strings.HasSuffix(fd.Modified, "\n") {
+		modifiedLines = strings.Split(fd.Modified, "\n")
+		modifiedLines = modifiedLines[:len(modifiedLines)-1] // Remove empty line at end
+	} else {
+		modifiedLines = strings.Split(fd.Modified, "\n")
 	}
 
 	// Simple line-by-line diff (not the most efficient, but works for our use case)
 	diff := generateSimpleDiff(originalLines, modifiedLines)
 
-	if len(diff) == 0 {
+	// Check if there are any actual changes (lines starting with + or -)
+	hasChanges := false
+	for _, line := range diff {
+		if strings.HasPrefix(line, "+") || strings.HasPrefix(line, "-") {
+			hasChanges = true
+			break
+		}
+	}
+
+	if !hasChanges {
 		return "" // No changes
 	}
 

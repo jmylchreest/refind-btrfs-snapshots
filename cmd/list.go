@@ -600,6 +600,11 @@ func outputSnapshotsTable(snapshots []*SnapshotInfo, showSize bool, showVolume b
 func filterFilesystems(filesystems []*btrfs.Filesystem, filter string) []*btrfs.Filesystem {
 	var filtered []*btrfs.Filesystem
 
+	// Return empty slice if filter is empty
+	if filter == "" {
+		return filtered
+	}
+
 	for _, fs := range filesystems {
 		// Check if filter matches any identifier
 		if fs.UUID == filter ||
