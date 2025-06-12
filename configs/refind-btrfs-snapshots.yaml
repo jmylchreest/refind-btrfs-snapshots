@@ -1,0 +1,64 @@
+# refind-btrfs-snapshots configuration file
+# This file configures the behavior of the rEFInd btrfs snapshot boot generator
+
+# Snapshot Configuration
+snapshot:
+  # Directories to search for snapshots (relative to filesystem root or absolute paths)
+  # NOTE: If using systemd path-based triggers, update refind-btrfs-snapshots.path
+  # with 'sudo systemctl edit refind-btrfs-snapshots.path' to match these directories
+  search_directories:
+    - "/.snapshots"
+
+  # Maximum depth to search in snapshot directories
+  max_depth: 3
+
+  # Number of most recent snapshots to include in boot menu
+  # Set to 0 or -1 to include all snapshots
+  selection_count: 0
+
+  # Directory where writable snapshots will be created (if create_writable is true)
+  destination_dir: "/.refind-btrfs-snapshots"
+
+  # How to handle making snapshots writable for booting:
+  # "copy": Create writable copies in destination_dir (uses more space)
+  # "toggle": Toggle read-only flag on original snapshots (space efficient)
+  writable_method: "toggle"
+
+# rEFInd Configuration
+refind:
+  # Path to main rEFInd configuration file (this will be prefixed with the ESP mount point)
+  config_path: "/EFI/refind/refind.conf"
+
+# EFI System Partition (ESP) Configuration
+esp:
+  # Preference order: uuid (if set) > auto_detect > mount_point
+  
+  # Specific ESP UUID to use (highest priority - overrides all other detection)
+  # Leave empty to use other detection methods
+  uuid: ""
+  
+  # Automatically detect ESP location (used if uuid is empty)
+  auto_detect: true
+
+  # ESP mount point (lowest priority - used only if auto_detect is false and uuid is empty)
+  mount_point: ""
+
+# Behavior Configuration
+behavior:
+  # Exit with error if currently booted from a snapshot
+  # This prevents accidental snapshot generation from within a snapshot
+  exit_on_snapshot_boot: true
+
+  # Clean up old writable snapshots that exceed selection_count
+  cleanup_old_snapshots: true
+
+# Logging Configuration
+log_level: "info" # trace, debug, info, warn, error, fatal, panic
+
+# Advanced Options
+advanced:
+  # Snapshot naming for writable copies (when writable_method is "copy")
+  naming:
+    # Timestamp format used in writable snapshot names: rwsnap_{timestamp}_ID{id}
+    # Uses Go time format (reference: Mon Jan 2 15:04:05 MST 2006)
+    timestamp_format: "2006-01-02_15-04-05"

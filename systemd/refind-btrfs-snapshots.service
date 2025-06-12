@@ -1,0 +1,19 @@
+[Unit]
+Description=Generate rEFInd btrfs snapshot boot entries
+Documentation=https://github.com/jmylchreest/refind-btrfs-snapshots
+After=local-fs.target
+Before=snapper-boot.service
+ConditionPathExists=/usr/local/bin/refind-btrfs-snapshots
+ConditionPathExists=/etc/refind-btrfs-snapshots.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/refind-btrfs-snapshots generate -y -c /etc/refind-btrfs-snapshots.conf
+User=root
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=300
+SyslogIdentifier=refind-btrfs-snapshots
+
+[Install]
+WantedBy=multi-user.target

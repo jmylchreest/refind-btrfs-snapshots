@@ -1,0 +1,19 @@
+[Unit]
+Description=Watch for btrfs snapshot changes
+Documentation=https://github.com/jmylchreest/refind-btrfs-snapshots
+ConditionPathExists=/.snapshots
+
+[Path]
+# Monitor the default snapshot directory for changes
+# Add additional PathChanged= lines for other snapshot directories
+PathChanged=/.snapshots
+# Example for multiple locations (uncomment as needed):
+# PathChanged=/run/timeshift/backup/timeshift-btrfs/snapshots
+# PathChanged=/snapshots
+
+# Wait 10 seconds after the last change before triggering
+TriggerLimitIntervalSec=10
+TriggerLimitBurst=1
+
+[Install]
+WantedBy=multi-user.target
