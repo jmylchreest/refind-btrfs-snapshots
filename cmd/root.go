@@ -74,12 +74,8 @@ func initConfig() {
 		// Use config file from the flag.
 		viper.SetConfigFile(cfgFile)
 	} else {
-		// Search for config in common locations
-		viper.AddConfigPath("/etc")
-		viper.AddConfigPath("$HOME/.config")
-		viper.AddConfigPath(".")
-		viper.SetConfigType("yaml")
-		viper.SetConfigName("refind-btrfs-snapshots")
+		// Use a fixed default config file path
+		viper.SetConfigFile("/etc/refind-btrfs-snapshots.yaml")
 	}
 
 	// Read in environment variables that match
@@ -93,7 +89,12 @@ func initConfig() {
 	if err := viper.ReadInConfig(); err == nil {
 		log.Debug().Str("config_file", viper.ConfigFileUsed()).Msg("Using config file")
 	} else {
-		log.Debug().Err(err).Msg("No config file found, using defaults")
+		// Check if viper found a config file or not
+		if viper.ConfigFileUsed() == "" {
+			log.Debug().Msg("No config file found, using defaults")
+		} else {
+			log.Debug().Err(err).Str("config_file", viper.ConfigFileUsed()).Msg("Config file found but failed to parse, using defaults")
+		}
 	}
 }
 
