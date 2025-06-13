@@ -65,7 +65,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "log level (trace, debug, info, warn, error, fatal, panic)")
 
 	// Bind flags to viper
-	viper.BindPFlag("log-level", rootCmd.PersistentFlags().Lookup("log-level"))
+	viper.BindPFlag("log_level", rootCmd.PersistentFlags().Lookup("log-level"))
 }
 
 // initConfig reads in config file and ENV variables if set.
