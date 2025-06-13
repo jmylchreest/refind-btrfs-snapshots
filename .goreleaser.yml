@@ -26,7 +26,8 @@ builds:
       - -X 'github.com/jmylchreest/refind-btrfs-snapshots/cmd.BuildTime={{.Date}}'
 
 archives:
-  - format: tar.gz
+  - formats:
+      - tar.gz
     files:
       - configs/*
       - systemd/*
