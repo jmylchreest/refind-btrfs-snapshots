@@ -404,3 +404,73 @@ func isBootableEntryMock(entry *MenuEntry, rootFS *mockRootFS) bool {
 
 	return true
 }
+
+func TestUpdateOptionsForSnapshot_SubvolumeFormatPreservation(t *testing.T) {
+	// Create a test snapshot
+	testTime := time.Date(2025, 6, 14, 10, 0, 2, 0, time.UTC)
+	snapshot := &btrfs.Snapshot{
+		Subvolume: &btrfs.Subvolume{
+			ID:   275,
+			Path: "/.snapshots/8/snapshot",
+		},
+		OriginalPath:   "/.snapshots/8/snapshot", 
+		FilesystemPath: "/.snapshots/8/snapshot",
+		SnapshotTime:   testTime,
+	}
+
+	tests := []struct {
+		name            string
+		originalOptions string
+		expectedSubvol  string
+		description     string
+	}{
+		{
+			name:            "preserve_@_format",
+			originalOptions: "quiet splash rw rootflags=subvol=@ cryptdevice=UUID=test:luks root=/dev/mapper/luks",
+			expectedSubvol:  "@/.snapshots/8/snapshot",
+			description:     "Should preserve @ format when original uses @",
+		},
+		{
+			name:            "preserve_/@_format", 
+			originalOptions: "quiet splash rw rootflags=subvol=/@ cryptdevice=UUID=test:luks root=/dev/mapper/luks",
+			expectedSubvol:  "/@/.snapshots/8/snapshot",
+			description:     "Should preserve /@ format when original uses /@",
+		},
+		{
+			name:            "handle_@_subpath_format",
+			originalOptions: "quiet splash rw rootflags=subvol=@/home cryptdevice=UUID=test:luks root=/dev/mapper/luks", 
+			expectedSubvol:  "@/.snapshots/8/snapshot",
+			description:     "Should use @ format when original uses @/subpath",
+		},
+		{
+			name:            "fallback_no_rootflags",
+			originalOptions: "quiet splash rw cryptdevice=UUID=test:luks root=/dev/mapper/luks",
+			expectedSubvol:  "@/.snapshots/8/snapshot",
+			description:     "Should use @ format as fallback when no rootflags present",
+		},
+		{
+			name:            "fallback_no_subvol",
+			originalOptions: "quiet splash rw rootflags=compress=zstd cryptdevice=UUID=test:luks root=/dev/mapper/luks",
+			expectedSubvol:  "@/.snapshots/8/snapshot", 
+			description:     "Should use @ format as fallback when rootflags has no subvol",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			generator := &Generator{}
+			result := generator.updateOptionsForSnapshot(tt.originalOptions, snapshot)
+
+			// Extract the subvol value from the result
+			parser := params.NewBootOptionsParser()
+			rootflags := parser.ExtractRootFlags(result)
+			actualSubvol := parser.ExtractSubvol(rootflags)
+
+			assert.Equal(t, tt.expectedSubvol, actualSubvol, tt.description)
+
+			// Also verify subvolid was updated
+			actualSubvolID := parser.ExtractSubvolID(rootflags)
+			assert.Equal(t, "275", actualSubvolID, "Subvolid should be updated to snapshot ID")
+		})
+	}
+}

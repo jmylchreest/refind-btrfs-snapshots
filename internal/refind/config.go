@@ -425,13 +425,32 @@ func (g *Generator) updateOptionsForSnapshot(originalOptions string, snapshot *b
 	options := originalOptions
 
 	// Update rootflags subvol parameter
-	// Convert snapshot path to be relative to the root subvolume
-	// snapshot.Path is like "/.snapshots/388/snapshot", we want "@/.snapshots/388/snapshot"
-	snapshotSubvol := "@" + snapshot.Path
-	// Ensure we don't get double @ if snapshot.Path already starts with @
+	// Preserve the original subvolume format (@ vs /@) used by the user
+	rootflags := parser.ExtractRootFlags(originalOptions)
+	originalSubvol := parser.ExtractSubvol(rootflags)
+	
+	var snapshotSubvol string
+	
+	// Always apply format preservation based on user's original preference
+	// snapshot.Path format varies, so extract the actual snapshot path part
+	var snapshotPathPart string
 	if strings.HasPrefix(snapshot.Path, "@") {
-		snapshotSubvol = snapshot.Path
+		// snapshot.Path is "@/.snapshots/X/snapshot", extract the "/.snapshots/X/snapshot" part
+		snapshotPathPart = strings.TrimPrefix(snapshot.Path, "@")
+	} else {
+		// snapshot.Path is "/.snapshots/X/snapshot", use as-is
+		snapshotPathPart = snapshot.Path
 	}
+	
+	// Determine the user's preferred format from their original subvol setting
+	if originalSubvol != "" && strings.HasPrefix(originalSubvol, "/@") {
+		// User prefers /@ format: /@/.snapshots/388/snapshot
+		snapshotSubvol = "/@" + snapshotPathPart
+	} else {
+		// User prefers @ format or fallback: @/.snapshots/388/snapshot
+		snapshotSubvol = "@" + snapshotPathPart
+	}
+	
 	options = parser.UpdateSubvol(options, snapshotSubvol)
 
 	// Update rootflags subvolid parameter
