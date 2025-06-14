@@ -205,6 +205,7 @@ func runListSnapshots(cmd *cobra.Command, args []string) error {
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 	showVolume, _ := cmd.Flags().GetBool("show-volume")
 	volumeFilter, _ := cmd.Flags().GetString("volume")
+	useLocalTime := viper.GetBool("display.local_time")
 
 	// Filter filesystems if volume specified
 	if volumeFilter != "" {
@@ -319,7 +320,7 @@ func runListSnapshots(cmd *cobra.Command, args []string) error {
 		return outputSnapshotsJSON(allSnapshots)
 	}
 
-	return outputSnapshotsTable(allSnapshots, showSize, showVolume)
+	return outputSnapshotsTable(allSnapshots, showSize, showVolume, useLocalTime)
 }
 
 // SnapshotInfo holds snapshot with filesystem context
@@ -381,7 +382,7 @@ func outputSnapshotsJSON(snapshots []*SnapshotInfo) error {
 	return encoder.Encode(snapshots)
 }
 
-func outputSnapshotsTable(snapshots []*SnapshotInfo, showSize bool, showVolume bool) error {
+func outputSnapshotsTable(snapshots []*SnapshotInfo, showSize bool, showVolume bool, useLocalTime bool) error {
 	// Sort snapshots by time descending (newest first)
 	sort.Slice(snapshots, func(i, j int) bool {
 		return snapshots[i].Snapshot.SnapshotTime.After(snapshots[j].Snapshot.SnapshotTime)
@@ -394,8 +395,13 @@ func outputSnapshotsTable(snapshots []*SnapshotInfo, showSize bool, showVolume b
 	var headers []string
 	var separators []string
 
-	headers = append(headers, "SNAPSHOT TIME", "SNAPSHOT PATH", "READ-ONLY", "SUBVOL ID")
-	separators = append(separators, "-------------", "-------------", "---------", "---------")
+	// Add timezone indicator to the time column header
+	timeHeader := "SNAPSHOT TIME (UTC)"
+	if useLocalTime {
+		timeHeader = "SNAPSHOT TIME (LOCAL)"
+	}
+	headers = append(headers, timeHeader, "SNAPSHOT PATH", "READ-ONLY", "SUBVOL ID")
+	separators = append(separators, "-------------------", "-------------", "---------", "---------")
 
 	if showVolume {
 		headers = append(headers, "VOLUME")
@@ -417,7 +423,7 @@ func outputSnapshotsTable(snapshots []*SnapshotInfo, showSize bool, showVolume b
 			readOnly = "Yes"
 		}
 
-		timeStr := info.Snapshot.SnapshotTime.Format("2006-01-02 15:04")
+		timeStr := btrfs.FormatSnapshotTimeForDisplay(info.Snapshot.SnapshotTime, useLocalTime)
 
 		// Build row data
 		var rowData []string

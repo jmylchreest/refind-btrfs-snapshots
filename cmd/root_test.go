@@ -118,7 +118,9 @@ func TestSetDefaults(t *testing.T) {
 		{"log_level", "info"},
 
 		// Advanced configuration
-		{"advanced.naming.timestamp_format", "2006-01-02_15-04-05"},
+		{"advanced.naming.rwsnap_format", "2006-01-02_15-04-05"},
+		{"advanced.naming.menu_format", "2006-01-02T15:04:05Z"},
+		{"display.local_time", false},
 	}
 
 	for _, tt := range tests {

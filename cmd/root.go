@@ -63,9 +63,11 @@ func init() {
 	// Global flags
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is /etc/refind-btrfs-snapshots.yaml)")
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "log level (trace, debug, info, warn, error, fatal, panic)")
+	rootCmd.PersistentFlags().Bool("local-time", false, "Display times in local time instead of UTC")
 
 	// Bind flags to viper
 	viper.BindPFlag("log_level", rootCmd.PersistentFlags().Lookup("log-level"))
+	viper.BindPFlag("display.local_time", rootCmd.PersistentFlags().Lookup("local-time"))
 }
 
 // initConfig reads in config file and ENV variables if set.
@@ -122,7 +124,9 @@ func setDefaults() {
 	viper.SetDefault("log_level", "info")
 
 	// Advanced configuration
-	viper.SetDefault("advanced.naming.timestamp_format", "2006-01-02_15-04-05")
+	viper.SetDefault("advanced.naming.rwsnap_format", "2006-01-02_15-04-05")
+	viper.SetDefault("advanced.naming.menu_format", "2006-01-02T15:04:05Z")
+	viper.SetDefault("display.local_time", false)
 }
 
 func initLogging() {

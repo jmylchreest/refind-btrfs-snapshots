@@ -363,7 +363,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 
 			// Since we're adding configs, record that snapshots are being added
 			for _, snapshot := range processedSnapshots {
-				snapshotDisplayName := snapshot.SnapshotTime.Format("2006-01-02_15-04-05")
+				snapshotDisplayName := btrfs.FormatSnapshotTimeForMenu(snapshot.SnapshotTime, viper.GetString("advanced.naming.menu_format"), viper.GetBool("display.local_time"))
 				operationSummary.AddedSnapshots = append(operationSummary.AddedSnapshots, snapshotDisplayName)
 			}
 		}
@@ -401,7 +401,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 			// Since we're adding configs, record that snapshots are being added (avoid duplicates)
 			if len(operationSummary.AddedSnapshots) == 0 {
 				for _, snapshot := range processedSnapshots {
-					snapshotDisplayName := snapshot.SnapshotTime.Format("2006-01-02_15-04-05")
+					snapshotDisplayName := btrfs.FormatSnapshotTimeForMenu(snapshot.SnapshotTime, viper.GetString("advanced.naming.menu_format"), viper.GetBool("display.local_time"))
 					operationSummary.AddedSnapshots = append(operationSummary.AddedSnapshots, snapshotDisplayName)
 				}
 			}
@@ -421,7 +421,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 
 	// Record included snapshots (all snapshots selected for this run)
 	for _, snapshot := range processedSnapshots {
-		snapshotDisplayName := snapshot.SnapshotTime.Format("2006-01-02_15-04-05")
+		snapshotDisplayName := btrfs.FormatSnapshotTimeForMenu(snapshot.SnapshotTime, viper.GetString("advanced.naming.menu_format"), viper.GetBool("display.local_time"))
 		operationSummary.IncludedSnapshots = append(operationSummary.IncludedSnapshots, snapshotDisplayName)
 	}
 

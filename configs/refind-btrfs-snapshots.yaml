@@ -55,10 +55,30 @@ behavior:
 # Logging Configuration
 log_level: "info" # trace, debug, info, warn, error, fatal, panic
 
+# Display Configuration
+display:
+  # Use local time instead of UTC for timestamps (default: false, uses UTC)
+  local_time: false
+
 # Advanced Options
 advanced:
-  # Snapshot naming for writable copies (when writable_method is "copy")
+  # Snapshot naming configuration
   naming:
-    # Timestamp format used in writable snapshot names: rwsnap_{timestamp}_ID{id}
+    # Timestamp format used in writable snapshot filenames: rwsnap_{rwsnap_format}_ID{id}
     # Uses Go time format (reference: Mon Jan 2 15:04:05 MST 2006)
-    timestamp_format: "2006-01-02_15-04-05"
+    # IMPORTANT: Must be filesystem-safe (no special characters like / : < > | etc.)
+    rwsnap_format: "2006-01-02_15-04-05"
+    
+    # Menu entry display format used in boot menu titles: "Original Title ({menu_format})"
+    # Supports both Go time format and custom templates with placeholders
+    # See https://pkg.go.dev/time#Time.Format for Go time format documentation
+    #
+    # Go time format examples:
+    #   "2006-01-02T15:04:05Z"     -> "2025-06-14T17:32:09Z"
+    #   "Jan 02, 2006 15:04"       -> "Jun 14, 2025 17:32"
+    #
+    # Custom template examples (with placeholders YYYY, YY, MM, DD, HH, mm, ss):
+    #   "btrfs snapshot: YYYY/MM/DD-HH:mm"     -> "btrfs snapshot: 2025/06/14-17:32"
+    #   "snapshot-YYYY-MM-DD"                  -> "snapshot-2025-06-14"
+    #   "backup YY.MM.DD HH:mm"                -> "backup 25.06.14 17:32"
+    menu_format: "2006-01-02T15:04:05Z"

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -365,6 +366,10 @@ func TestMergeCustomizations(t *testing.T) {
 }
 
 func TestGenerateSingleMenuEntry(t *testing.T) {
+	// Set up viper defaults for the test
+	viper.SetDefault("advanced.naming.menu_format", "2006-01-02T15:04:05Z")
+	viper.SetDefault("display.local_time", false)
+	
 	generator := NewGenerator("/boot/efi")
 
 	templateEntry := &MenuEntry{
@@ -400,7 +405,7 @@ func TestGenerateSingleMenuEntry(t *testing.T) {
 	assert.Contains(t, content, "    options quiet rw rootflags=subvol=@ root=UUID=test-uuid")
 
 	// Should contain submenu for snapshot
-	assert.Contains(t, content, "    submenuentry \"Arch Linux (2025-06-12_07-00-18)\" {")
+	assert.Contains(t, content, "    submenuentry \"Arch Linux (2025-06-12T07:00:18Z)\" {")
 	assert.Contains(t, content, "rootflags=subvol=@/.snapshots/101/snapshot")
 	assert.Contains(t, content, "subvolid=101")
 	assert.Contains(t, content, "root=UUID=test-uuid")

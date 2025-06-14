@@ -210,14 +210,13 @@ func (m *Manager) CreateWritableSnapshot(snapshot *Snapshot, destDir string, r r
 		return nil, fmt.Errorf("invalid snapshot provided")
 	}
 
-	// Generate snapshot name using configured timestamp format
-	timestampFormat := viper.GetString("advanced.naming.timestamp_format")
+	// Generate snapshot name using configured rwsnap timestamp format
+	timestampFormat := viper.GetString("advanced.naming.rwsnap_format")
 	if timestampFormat == "" {
 		timestampFormat = "2006-01-02_15-04-05" // Default format
 	}
-	snapshotName := fmt.Sprintf("rwsnap_%s_ID%d",
-		snapshot.SnapshotTime.Format(timestampFormat),
-		snapshot.ID)
+	formattedTime := FormatSnapshotTimeForRwsnap(snapshot.SnapshotTime, timestampFormat, viper.GetBool("display.local_time"))
+	snapshotName := fmt.Sprintf("rwsnap_%s_ID%d", formattedTime, snapshot.ID)
 	destPath := filepath.Join(destDir, snapshotName)
 
 	// Create destination directory
@@ -1088,6 +1087,7 @@ func (m *Manager) parseSnapperInfo(snapshotDir string) (*SnapperInfo, error) {
 }
 
 // getSnapperTimestamp parses snapper date format and returns time.Time
+// Times in info.xml are assumed to be in UTC
 func (m *Manager) getSnapperTimestamp(dateStr string) (time.Time, error) {
 	// Snapper uses format: "2025-06-11 09:00:11"
 	layouts := []string{
@@ -1098,11 +1098,87 @@ func (m *Manager) getSnapperTimestamp(dateStr string) (time.Time, error) {
 
 	for _, layout := range layouts {
 		if t, err := time.Parse(layout, dateStr); err == nil {
+			// If the parsed time has no timezone info (first layout), assume UTC
+			if layout == "2006-01-02 15:04:05" {
+				return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC), nil
+			}
 			return t, nil
 		}
 	}
 
 	return time.Time{}, fmt.Errorf("unable to parse snapper date: %s", dateStr)
+}
+
+// FormatSnapshotTimeForDisplay formats a snapshot time for display (list commands)
+// Uses ISO8601 format and respects the local_time setting
+func FormatSnapshotTimeForDisplay(t time.Time, useLocalTime bool) string {
+	if useLocalTime {
+		return t.Local().Format("2006-01-02 15:04")
+	}
+	return t.UTC().Format("2006-01-02 15:04")
+}
+
+// FormatSnapshotTimeForMenu formats a snapshot time for menu entries using configured template.
+// Supports both Go time format strings (using reference time Mon Jan 2 15:04:05 MST 2006) and custom templates.
+// See https://pkg.go.dev/time#Time.Format for Go time format documentation.
+//
+// Custom template placeholders:
+// - YYYY: 4-digit year (2006)
+// - YY: 2-digit year (06) 
+// - MM: 2-digit month (01)
+// - DD: 2-digit day (02)
+// - HH: 2-digit hour (15)
+// - mm: 2-digit minute (04)
+// - ss: 2-digit second (05)
+// Example: "btrfs snapshot: YYYY/MM/DD-HH:mm" -> "btrfs snapshot: 2025/06/14-17:32"
+func FormatSnapshotTimeForMenu(t time.Time, template string, useLocalTime bool) string {
+	var timeToUse time.Time
+	if useLocalTime {
+		timeToUse = t.Local()
+	} else {
+		timeToUse = t.UTC()
+	}
+	
+	// Check if template contains custom placeholders
+	if strings.Contains(template, "YYYY") || strings.Contains(template, "YY") || 
+	   strings.Contains(template, "MM") || strings.Contains(template, "DD") || 
+	   strings.Contains(template, "HH") || strings.Contains(template, "mm") || 
+	   strings.Contains(template, "ss") {
+		
+		// Apply custom template substitutions
+		result := template
+		result = strings.ReplaceAll(result, "YYYY", timeToUse.Format("2006"))
+		result = strings.ReplaceAll(result, "YY", timeToUse.Format("06"))
+		result = strings.ReplaceAll(result, "MM", timeToUse.Format("01"))
+		result = strings.ReplaceAll(result, "DD", timeToUse.Format("02"))
+		result = strings.ReplaceAll(result, "HH", timeToUse.Format("15"))
+		result = strings.ReplaceAll(result, "mm", timeToUse.Format("04"))
+		result = strings.ReplaceAll(result, "ss", timeToUse.Format("05"))
+		return result
+	}
+	
+	// Fall back to Go time format
+	return timeToUse.Format(template)
+}
+
+// FormatSnapshotTimeForRwsnap formats a snapshot time for rwsnap filenames
+// Similar to FormatSnapshotTimeForMenu but ensures filesystem-safe output
+// Automatically replaces problematic characters with safe alternatives
+func FormatSnapshotTimeForRwsnap(t time.Time, template string, useLocalTime bool) string {
+	result := FormatSnapshotTimeForMenu(t, template, useLocalTime)
+	
+	// Replace filesystem-unsafe characters with safe alternatives
+	result = strings.ReplaceAll(result, "/", "-")
+	result = strings.ReplaceAll(result, "\\", "-")
+	result = strings.ReplaceAll(result, ":", "-")
+	result = strings.ReplaceAll(result, "<", "-")
+	result = strings.ReplaceAll(result, ">", "-")
+	result = strings.ReplaceAll(result, "|", "-")
+	result = strings.ReplaceAll(result, "?", "-")
+	result = strings.ReplaceAll(result, "*", "-")
+	result = strings.ReplaceAll(result, " ", "_")
+	
+	return result
 }
 
 // CleanupSnapshotWritability ensures only selected snapshots are writable

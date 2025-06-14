@@ -291,6 +291,85 @@ func TestIsBootableEntryWithNilSubvolume(t *testing.T) {
 	assert.True(t, result, "Should be true when rootFS has no subvolume info")
 }
 
+func TestIsBootableEntry_SubvolumeFormats(t *testing.T) {
+	tests := []struct {
+		name           string
+		rootFSSubvol   string  // Root filesystem subvolume path
+		entrySubvol    string  // Menu entry subvol value
+		expectedResult bool
+		description    string
+	}{
+		{
+			name:           "root_@_entry_@",
+			rootFSSubvol:   "@",
+			entrySubvol:    "@",
+			expectedResult: true,
+			description:    "Root FS with @ and entry with @ should match",
+		},
+		{
+			name:           "root_@_entry_/@",
+			rootFSSubvol:   "@",
+			entrySubvol:    "/@",
+			expectedResult: true,
+			description:    "Root FS with @ and entry with /@ should match (normalized)",
+		},
+		{
+			name:           "root_/@_entry_@",
+			rootFSSubvol:   "/@",
+			entrySubvol:    "@",
+			expectedResult: true,
+			description:    "Root FS with /@ and entry with @ should match (normalized)",
+		},
+		{
+			name:           "root_/@_entry_/@",
+			rootFSSubvol:   "/@",
+			entrySubvol:    "/@",
+			expectedResult: true,
+			description:    "Root FS with /@ and entry with /@ should match",
+		},
+		{
+			name:           "root_@_entry_@home",
+			rootFSSubvol:   "@",
+			entrySubvol:    "@home",
+			expectedResult: false,
+			description:    "Different subvolumes should not match",
+		},
+		{
+			name:           "root_/@_entry_/@home",
+			rootFSSubvol:   "/@",
+			entrySubvol:    "/@home",
+			expectedResult: false,
+			description:    "Different subvolumes with / prefix should not match",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create root filesystem with specified subvolume path
+			rootFS := &btrfs.Filesystem{
+				UUID:   "test-uuid",
+				Device: "/dev/sda1",
+				Subvolume: &btrfs.Subvolume{
+					ID:   1,
+					Path: tt.rootFSSubvol,
+				},
+			}
+
+			// Create menu entry with specified subvol
+			entry := &refind.MenuEntry{
+				Title: "Test Entry",
+				BootOptions: &refind.BootOptions{
+					Root:   "UUID=test-uuid",
+					Subvol: tt.entrySubvol,
+				},
+			}
+
+			result := isBootableEntry(entry, rootFS)
+			assert.Equal(t, tt.expectedResult, result, tt.description)
+		})
+	}
+}
+
 func TestCheckRootPrivileges(t *testing.T) {
 	// This test is tricky because it depends on the actual user running the test
 	// We'll test the logic by checking the return value
