@@ -296,7 +296,7 @@ func TestFormatSnapshotTimeForDisplay(t *testing.T) {
 		{
 			name:      "local_time_format",
 			localTime: true,
-			expected:  "2025-06-14 11:00", // Local time may differ from UTC
+			expected:  testTime.Local().Format("2006-01-02 15:04"), // Use actual local time conversion
 		},
 	}
 
