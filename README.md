@@ -294,14 +294,14 @@ advanced:
   naming:
     # For writable snapshot filenames (filesystem-safe)
     rwsnap_format: "2006-01-02_15-04-05"
-    
+
     # For menu entry titles (supports templates and Go formats)
     menu_format: "2006-01-02T15:04:05Z"
 ```
 
 **Template Placeholders** (for `menu_format`):
 - `YYYY` - 4-digit year
-- `YY` - 2-digit year  
+- `YY` - 2-digit year
 - `MM` - 2-digit month
 - `DD` - 2-digit day
 - `HH` - 2-digit hour
@@ -314,7 +314,7 @@ advanced:
 menu_format: "2006-01-02T15:04:05Z"        # → "2025-06-14T17:32:09Z"
 menu_format: "Jan 02, 2006 15:04"          # → "Jun 14, 2025 17:32"
 
-# Template formats  
+# Template formats
 menu_format: "btrfs snapshot: YYYY/MM/DD-HH:mm"  # → "btrfs snapshot: 2025/06/14-17:32"
 menu_format: "snapshot-YYYY-MM-DD"               # → "snapshot-2025-06-14"
 ```
@@ -604,14 +604,6 @@ This will show:
 - Time parsing and formatting
 - Configuration resolution
 - Boot entry generation logic
-
-## License
-
-GPL-3.0 License - see [LICENSE](LICENSE) for details.
-
-## Author
-
-**John Mylchreest** <jmylchreest@gmail.com>
 
 ## Links
 
