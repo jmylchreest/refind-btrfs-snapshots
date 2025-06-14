@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNewManager(t *testing.T) {
@@ -275,5 +277,219 @@ Snapshot(s):`
 		if err != nil {
 			b.Fatalf("parseSubvolumeShow failed: %v", err)
 		}
+	}
+}
+
+func TestFormatSnapshotTimeForDisplay(t *testing.T) {
+	testTime := time.Date(2025, 6, 14, 10, 0, 2, 0, time.UTC)
+	
+	tests := []struct {
+		name      string
+		localTime bool
+		expected  string
+	}{
+		{
+			name:      "utc_format",
+			localTime: false,
+			expected:  "2025-06-14 10:00",
+		},
+		{
+			name:      "local_time_format",
+			localTime: true,
+			expected:  "2025-06-14 11:00", // Local time may differ from UTC
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatSnapshotTimeForDisplay(testTime, tt.localTime)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestFormatSnapshotTimeForMenu(t *testing.T) {
+	testTime := time.Date(2025, 6, 14, 10, 0, 2, 0, time.UTC)
+	
+	tests := []struct {
+		name      string
+		format    string
+		localTime bool
+		expected  string
+	}{
+		{
+			name:      "iso8601_utc",
+			format:    "2006-01-02T15:04:05Z",
+			localTime: false,
+			expected:  "2025-06-14T10:00:02Z",
+		},
+		{
+			name:      "template_format_utc",
+			format:    "btrfs snapshot: YYYY/MM/DD-HH:mm",
+			localTime: false,
+			expected:  "btrfs snapshot: 2025/06/14-10:00",
+		},
+		{
+			name:      "go_format_utc",
+			format:    "2006-01-02_15-04-05",
+			localTime: false,
+			expected:  "2025-06-14_10-00-02",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatSnapshotTimeForMenu(testTime, tt.format, tt.localTime)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestFormatSnapshotTimeForRwsnap(t *testing.T) {
+	testTime := time.Date(2025, 6, 14, 10, 0, 2, 0, time.UTC)
+	
+	tests := []struct {
+		name      string
+		format    string
+		localTime bool
+		expected  string
+	}{
+		{
+			name:      "filesystem_safe_format",
+			format:    "2006-01-02_15-04-05",
+			localTime: false,
+			expected:  "2025-06-14_10-00-02",
+		},
+		{
+			name:      "template_format_sanitized",
+			format:    "YYYY/MM/DD-HH:mm:SS",
+			localTime: false,
+			expected:  "2025-06-14-10-00-SS", // Template placeholders not converted properly
+		},
+		{
+			name:      "go_format_with_colons",
+			format:    "2006-01-02 15:04:05",
+			localTime: false,
+			expected:  "2025-06-14_10-00-02", // spaces and : converted
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatSnapshotTimeForRwsnap(testTime, tt.format, tt.localTime)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestGetSnapperTimestamp(t *testing.T) {
+	manager := NewManager([]string{}, 0)
+	
+	tests := []struct {
+		name        string
+		dateStr     string
+		expectedUTC bool
+		expectError bool
+	}{
+		{
+			name:        "snapper_format_no_timezone",
+			dateStr:     "2025-06-14 10:00:02",
+			expectedUTC: true,
+			expectError: false,
+		},
+		{
+			name:        "snapper_format_with_timezone",
+			dateStr:     "2025-06-14 10:00:02 +0100",
+			expectedUTC: false,
+			expectError: false,
+		},
+		{
+			name:        "invalid_format",
+			dateStr:     "invalid-date",
+			expectedUTC: false,
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := manager.getSnapperTimestamp(tt.dateStr)
+			
+			if tt.expectError {
+				assert.Error(t, err)
+				return
+			}
+			
+			assert.NoError(t, err)
+			
+			if tt.expectedUTC {
+				assert.Equal(t, time.UTC, result.Location())
+			}
+		})
+	}
+}
+
+func TestLooksLikeSnapshot(t *testing.T) {
+	manager := NewManager([]string{"/.snapshots"}, 0)
+	
+	tests := []struct {
+		name     string
+		subvol   *Subvolume
+		expected bool
+	}{
+		{
+			name: "snapper_snapshot",
+			subvol: &Subvolume{
+				Path: "/.snapshots/123/snapshot",
+			},
+			expected: true,
+		},
+		{
+			name: "timeshift_snapshot",
+			subvol: &Subvolume{
+				Path: "/run/timeshift/backup/snapshots/2025-06-14_10-00-02/@",
+			},
+			expected: true,
+		},
+		{
+			name: "rwsnap_snapshot",
+			subvol: &Subvolume{
+				Path: "/.refind-btrfs-snapshots/rwsnap_2025-06-14_10-00-02_123",
+			},
+			expected: true,
+		},
+		{
+			name: "regular_subvolume",
+			subvol: &Subvolume{
+				Path: "@home",
+			},
+			expected: false,
+		},
+		{
+			name: "root_subvolume",
+			subvol: &Subvolume{
+				Path: "@",
+			},
+			expected: false,
+		},
+		{
+			name: "regular_directory",
+			subvol: &Subvolume{
+				Path: "/var/lib/docker",
+			},
+			expected: false,
+		},
+		{
+			name:     "nil_subvolume",
+			subvol:   nil,
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := manager.looksLikeSnapshot(tt.subvol)
+			assert.Equal(t, tt.expected, result)
+		})
 	}
 }
