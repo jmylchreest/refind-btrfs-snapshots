@@ -329,9 +329,13 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 
 	// Group entries by their source file
 	for _, entry := range refindLinuxEntries {
-		// Only process original entries that have rootflags=subvol=@ (not our generated snapshot entries)
-		if entry.BootOptions != nil && entry.BootOptions.Subvol == "@" {
-			refindLinuxFiles[entry.SourceFile] = append(refindLinuxFiles[entry.SourceFile], entry)
+		// Only process original entries that have rootflags=subvol=@ or /@ (not our generated snapshot entries)
+		if entry.BootOptions != nil && entry.BootOptions.Subvol != "" {
+			// Normalize subvol path for comparison (same logic as isBootableEntry)
+			entrySubvol := strings.TrimPrefix(entry.BootOptions.Subvol, "/")
+			if entrySubvol == "@" {
+				refindLinuxFiles[entry.SourceFile] = append(refindLinuxFiles[entry.SourceFile], entry)
+			}
 		}
 	}
 
