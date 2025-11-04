@@ -89,6 +89,30 @@ func (p *ParameterParser) ExtractAll(text string) map[string]string {
 	return params
 }
 
+// ExtractMultiple extracts all values for a parameter that may appear multiple times
+func (p *ParameterParser) ExtractMultiple(text, param string) []string {
+	var values []string
+	pattern := regexp.MustCompile(fmt.Sprintf(`%s=([^%s]+)`,
+		regexp.QuoteMeta(param), p.separators))
+	matches := pattern.FindAllStringSubmatch(text, -1)
+
+	for _, match := range matches {
+		if len(match) > 1 {
+			values = append(values, match[1])
+		}
+	}
+
+	return values
+}
+
+// RemoveAll removes all instances of a parameter from the text
+func (p *ParameterParser) RemoveAll(text, param string) string {
+	pattern := regexp.MustCompile(fmt.Sprintf(`\s*%s=([^%s]+)`,
+		regexp.QuoteMeta(param), p.separators))
+	result := pattern.ReplaceAllString(text, "")
+	return strings.TrimSpace(regexp.MustCompile(`\s+`).ReplaceAllString(result, " "))
+}
+
 // BootOptionsParser provides specialized parsing for boot options
 type BootOptionsParser struct {
 	SpaceParser *ParameterParser

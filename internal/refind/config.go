@@ -429,9 +429,9 @@ func (g *Generator) updateOptionsForSnapshot(originalOptions string, snapshot *b
 	// Preserve the original subvolume format (@ vs /@) used by the user
 	rootflags := parser.ExtractRootFlags(originalOptions)
 	originalSubvol := parser.ExtractSubvol(rootflags)
-	
+
 	var snapshotSubvol string
-	
+
 	// Always apply format preservation based on user's original preference
 	// snapshot.Path format varies, so extract the actual snapshot path part
 	var snapshotPathPart string
@@ -442,7 +442,7 @@ func (g *Generator) updateOptionsForSnapshot(originalOptions string, snapshot *b
 		// snapshot.Path is "/.snapshots/X/snapshot", use as-is
 		snapshotPathPart = snapshot.Path
 	}
-	
+
 	// Determine the user's preferred format from their original subvol setting
 	if originalSubvol != "" && strings.HasPrefix(originalSubvol, "/@") {
 		// User prefers /@ format: /@/.snapshots/388/snapshot
@@ -451,18 +451,22 @@ func (g *Generator) updateOptionsForSnapshot(originalOptions string, snapshot *b
 		// User prefers @ format or fallback: @/.snapshots/388/snapshot
 		snapshotSubvol = "@" + snapshotPathPart
 	}
-	
+
 	options = parser.UpdateSubvol(options, snapshotSubvol)
 
 	// Update rootflags subvolid parameter
 	options = parser.UpdateSubvolID(options, fmt.Sprintf("%d", snapshot.ID))
 
-	// Update initrd path if present
-	if initrd := parser.SpaceParser.Extract(options, "initrd"); initrd != "" {
-		newInitrdPath := g.updatePathForSnapshot(initrd, snapshot)
-		// Convert forward slashes to backslashes for Windows-style paths in options
-		newInitrdPath = strings.ReplaceAll(newInitrdPath, "/", "\\")
-		options = parser.SpaceParser.Update(options, "initrd", newInitrdPath)
+	// Handle multiple initrd parameters if present
+	initrds := parser.SpaceParser.ExtractMultiple(options, "initrd")
+	if len(initrds) > 0 {
+		// Remove all existing initrd parameters
+		options = parser.SpaceParser.RemoveAll(options, "initrd")
+
+		// Add back all initrd parameters (they don't need path updates for snapshots)
+		for _, initrd := range initrds {
+			options = options + fmt.Sprintf(" initrd=%s", initrd)
+		}
 	}
 
 	return options
@@ -594,7 +598,7 @@ func (g *Generator) generateRefindLinuxConfWithAllEntries(originalContent string
 				inGeneratedSection = false
 				continue // Skip the end marker line
 			}
-			
+
 			// Skip lines within generated sections
 			if inGeneratedSection {
 				continue
@@ -605,7 +609,7 @@ func (g *Generator) generateRefindLinuxConfWithAllEntries(originalContent string
 				inGeneratedSection = true
 				continue // Skip the comment line
 			}
-			
+
 			// If we're in a generated section, check if this is a generated entry
 			if inGeneratedSection {
 				if strings.TrimSpace(line) != "" && g.isLegacyGeneratedSnapshotEntry(line) {
@@ -619,7 +623,7 @@ func (g *Generator) generateRefindLinuxConfWithAllEntries(originalContent string
 				}
 			}
 		}
-		
+
 		if !inGeneratedSection {
 			lines = append(lines, line)
 		}
@@ -650,13 +654,12 @@ func (g *Generator) generateRefindLinuxConfWithAllEntries(originalContent string
 				lines = append(lines, snapshotLine)
 			}
 		}
-		
+
 		lines = append(lines, "##refind-btrfs-snapshots-end")
 	}
 
 	return strings.Join(lines, "\n"), nil
 }
-
 
 // generateRefindLinuxConfContent adds snapshot entries to a refind_linux.conf file
 func (g *Generator) generateRefindLinuxConfContent(originalContent string, snapshots []*btrfs.Snapshot, sourceEntry *MenuEntry, rootFS *btrfs.Filesystem) (string, error) {
@@ -667,7 +670,7 @@ func (g *Generator) generateRefindLinuxConfContent(originalContent string, snaps
 	scanner := bufio.NewScanner(strings.NewReader(originalContent))
 	var inGeneratedSection bool
 	var foundMarkers bool
-	
+
 	// First pass: check if we have any markers
 	markerScanner := bufio.NewScanner(strings.NewReader(originalContent))
 	for markerScanner.Scan() {
@@ -677,10 +680,10 @@ func (g *Generator) generateRefindLinuxConfContent(originalContent string, snaps
 			break
 		}
 	}
-	
+
 	for scanner.Scan() {
 		line := scanner.Text()
-		
+
 		if foundMarkers {
 			// Use marker-based cleanup
 			if strings.Contains(line, "##refind-btrfs-snapshots-start") {
@@ -691,7 +694,7 @@ func (g *Generator) generateRefindLinuxConfContent(originalContent string, snaps
 				inGeneratedSection = false
 				continue // Skip the end marker line
 			}
-			
+
 			// Skip lines within generated sections
 			if inGeneratedSection {
 				continue
@@ -704,7 +707,7 @@ func (g *Generator) generateRefindLinuxConfContent(originalContent string, snaps
 				}
 			}
 		}
-		
+
 		lines = append(lines, line)
 
 		// Check if this is the source entry line we're extending
@@ -736,7 +739,7 @@ func (g *Generator) generateRefindLinuxConfContent(originalContent string, snaps
 			snapshotLine := fmt.Sprintf("\"%s\" \"%s\"", snapshotTitle, snapshotOptions)
 			lines = append(lines, snapshotLine)
 		}
-		
+
 		lines = append(lines, "##refind-btrfs-snapshots-end")
 	}
 

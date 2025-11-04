@@ -23,11 +23,11 @@ func TestNewCommaParameterParser(t *testing.T) {
 
 func TestParameterParser_Extract(t *testing.T) {
 	tests := []struct {
-		name      string
-		parser    *ParameterParser
-		text      string
-		param     string
-		expected  string
+		name     string
+		parser   *ParameterParser
+		text     string
+		param    string
+		expected string
 	}{
 		{
 			name:     "space_separated_basic",
@@ -83,12 +83,12 @@ func TestParameterParser_Extract(t *testing.T) {
 
 func TestParameterParser_Update(t *testing.T) {
 	tests := []struct {
-		name      string
-		parser    *ParameterParser
-		text      string
-		param     string
-		newValue  string
-		expected  string
+		name     string
+		parser   *ParameterParser
+		text     string
+		param    string
+		newValue string
+		expected string
 	}{
 		{
 			name:     "update_existing_parameter",
@@ -226,7 +226,7 @@ func TestBootOptionsParser(t *testing.T) {
 
 func TestBootOptionsParser_ExtractRootFlags(t *testing.T) {
 	parser := NewBootOptionsParser()
-	
+
 	tests := []struct {
 		name     string
 		options  string
@@ -259,7 +259,7 @@ func TestBootOptionsParser_ExtractRootFlags(t *testing.T) {
 
 func TestBootOptionsParser_ExtractSubvol(t *testing.T) {
 	parser := NewBootOptionsParser()
-	
+
 	tests := []struct {
 		name      string
 		rootflags string
@@ -297,7 +297,7 @@ func TestBootOptionsParser_ExtractSubvol(t *testing.T) {
 
 func TestBootOptionsParser_ExtractSubvolID(t *testing.T) {
 	parser := NewBootOptionsParser()
-	
+
 	tests := []struct {
 		name      string
 		rootflags string
@@ -330,7 +330,7 @@ func TestBootOptionsParser_ExtractSubvolID(t *testing.T) {
 
 func TestBootOptionsParser_UpdateSubvol(t *testing.T) {
 	parser := NewBootOptionsParser()
-	
+
 	tests := []struct {
 		name        string
 		options     string
@@ -378,7 +378,7 @@ func TestBootOptionsParser_UpdateSubvol(t *testing.T) {
 
 func TestBootOptionsParser_UpdateSubvolID(t *testing.T) {
 	parser := NewBootOptionsParser()
-	
+
 	tests := []struct {
 		name        string
 		options     string
@@ -413,6 +413,98 @@ func TestBootOptionsParser_UpdateSubvolID(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := parser.UpdateSubvolID(tt.options, tt.newSubvolID)
 			assert.Equal(t, tt.expected, result, tt.description)
+		})
+	}
+}
+
+func TestParameterParser_ExtractMultiple(t *testing.T) {
+	tests := []struct {
+		name     string
+		parser   *ParameterParser
+		text     string
+		param    string
+		expected []string
+	}{
+		{
+			name:     "multiple_initrd_parameters",
+			parser:   NewSpaceParameterParser(),
+			text:     "quiet initrd=amd-ucode.img initrd=initramfs-linux-cachyos.img splash",
+			param:    "initrd",
+			expected: []string{"amd-ucode.img", "initramfs-linux-cachyos.img"},
+		},
+		{
+			name:     "single_initrd_parameter",
+			parser:   NewSpaceParameterParser(),
+			text:     "quiet initrd=initramfs-linux.img splash",
+			param:    "initrd",
+			expected: []string{"initramfs-linux.img"},
+		},
+		{
+			name:     "no_initrd_parameters",
+			parser:   NewSpaceParameterParser(),
+			text:     "quiet splash rw",
+			param:    "initrd",
+			expected: nil,
+		},
+		{
+			name:     "three_initrd_parameters",
+			parser:   NewSpaceParameterParser(),
+			text:     "initrd=ucode.img initrd=initramfs.img initrd=fallback.img",
+			param:    "initrd",
+			expected: []string{"ucode.img", "initramfs.img", "fallback.img"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.parser.ExtractMultiple(tt.text, tt.param)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestParameterParser_RemoveAll(t *testing.T) {
+	tests := []struct {
+		name     string
+		parser   *ParameterParser
+		text     string
+		param    string
+		expected string
+	}{
+		{
+			name:     "remove_multiple_initrd_parameters",
+			parser:   NewSpaceParameterParser(),
+			text:     "quiet initrd=amd-ucode.img initrd=initramfs-linux.img splash",
+			param:    "initrd",
+			expected: "quiet splash",
+		},
+		{
+			name:     "remove_single_parameter",
+			parser:   NewSpaceParameterParser(),
+			text:     "quiet initrd=initramfs.img splash",
+			param:    "initrd",
+			expected: "quiet splash",
+		},
+		{
+			name:     "remove_nonexistent_parameter",
+			parser:   NewSpaceParameterParser(),
+			text:     "quiet splash rw",
+			param:    "initrd",
+			expected: "quiet splash rw",
+		},
+		{
+			name:     "remove_three_parameters",
+			parser:   NewSpaceParameterParser(),
+			text:     "root=/dev/sda1 initrd=a.img initrd=b.img initrd=c.img quiet",
+			param:    "initrd",
+			expected: "root=/dev/sda1 quiet",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.parser.RemoveAll(tt.text, tt.param)
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
