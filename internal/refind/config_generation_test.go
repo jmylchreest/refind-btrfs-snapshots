@@ -3,6 +3,7 @@ package refind
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -320,7 +321,7 @@ menuentry "Custom Entry" {
 	assert.Equal(t, "Arch Linux", archEntry.Title)
 	assert.Equal(t, "/EFI/refind/icons/os_arch.png", archEntry.Icon)
 	assert.Equal(t, "/boot/vmlinuz-linux", archEntry.Loader)
-	assert.Equal(t, "/boot/initramfs-linux.img", archEntry.Initrd)
+	assert.Equal(t, []string{"/boot/initramfs-linux.img"}, archEntry.Initrd)
 	assert.Equal(t, "quiet zswap.enabled=0 rw rootflags=subvol=@ root=UUID=test-uuid", archEntry.Options)
 
 	// Check "Custom Entry" entry
@@ -347,7 +348,7 @@ func TestMergeCustomizations(t *testing.T) {
 		Icon:    "/custom/icon.png",
 		Volume:  "LABEL=CUSTOM",
 		Loader:  "/custom/loader",
-		Initrd:  "/custom/initrd",
+		Initrd:  []string{"/custom/initrd"},
 		Options: "custom-options",
 	}
 
@@ -358,7 +359,7 @@ func TestMergeCustomizations(t *testing.T) {
 	assert.Equal(t, "/custom/icon.png", merged.Icon)
 	assert.Equal(t, "LABEL=CUSTOM", merged.Volume)
 	assert.Equal(t, "/custom/loader", merged.Loader)
-	assert.Equal(t, "/custom/initrd", merged.Initrd)
+	assert.Equal(t, []string{"/custom/initrd"}, merged.Initrd)
 	assert.Equal(t, "custom-options", merged.Options)
 
 	// Should have empty submenues (they get regenerated)
@@ -375,7 +376,7 @@ func TestGenerateSingleMenuEntry(t *testing.T) {
 	templateEntry := &MenuEntry{
 		Icon:    "/EFI/refind/icons/os_arch.png",
 		Loader:  "/boot/vmlinuz-linux",
-		Initrd:  "/boot/initramfs-linux.img",
+		Initrd:  []string{"/boot/initramfs-linux.img"},
 		Options: "quiet rw rootflags=subvol=@ root=UUID=test-uuid",
 	}
 
@@ -443,6 +444,7 @@ menuentry "Arch Linux" {
 	// Should have preserved custom attributes
 	assert.Equal(t, "/EFI/refind/icons/custom_arch.png", archEntry.Icon)
 	assert.Equal(t, "LABEL=CUSTOM_ESP", archEntry.Volume)
+	assert.Equal(t, []string{"/boot/initramfs-linux.img"}, archEntry.Initrd)
 	assert.Equal(t, "quiet zswap.enabled=0 rw rootflags=subvol=@ root=UUID=test-uuid custom_param=1", archEntry.Options)
 }
 
@@ -474,4 +476,108 @@ func TestUpdateOptionsForSnapshot_AvoidDoubleAt(t *testing.T) {
 	result2 := generator.updateOptionsForSnapshot(originalOptions, snapshotWithAt)
 	assert.Contains(t, result2, "rootflags=subvol=@/.snapshots/102/snapshot")
 	assert.NotContains(t, result2, "@@") // Should not have double @
+}
+
+func TestParseConfig_MultipleInitrdDirectives(t *testing.T) {
+	// Create a temporary directory for test files
+	tmpDir := t.TempDir()
+
+	// Create a test config with multiple initrd directives (e.g., microcode + initramfs)
+	configContent := `timeout 20
+
+menuentry "Arch Linux" {
+    icon /EFI/refind/icons/os_arch.png
+    loader /boot/vmlinuz-linux
+    initrd /boot/intel-ucode.img
+    initrd /boot/initramfs-linux.img
+    options "root=UUID=test-uuid rootflags=subvol=@ rw quiet"
+}
+
+menuentry "Arch Linux LTS" {
+    icon /EFI/refind/icons/os_arch.png
+    loader /boot/vmlinuz-linux-lts
+    initrd /boot/amd-ucode.img
+    initrd /boot/initramfs-linux-lts.img
+    options "root=UUID=test-uuid rootflags=subvol=@ rw quiet"
+}`
+
+	configPath := filepath.Join(tmpDir, "refind.conf")
+	err := os.WriteFile(configPath, []byte(configContent), 0644)
+	require.NoError(t, err)
+
+	// Parse the config
+	parser := NewParser(tmpDir)
+	config, err := parser.ParseConfig(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, config)
+	require.Len(t, config.Entries, 2)
+
+	// Check first entry has both initrd files
+	archEntry := config.Entries[0]
+	assert.Equal(t, "Arch Linux", archEntry.Title)
+	assert.Equal(t, []string{"/boot/intel-ucode.img", "/boot/initramfs-linux.img"}, archEntry.Initrd)
+
+	// Check second entry has both initrd files
+	ltsEntry := config.Entries[1]
+	assert.Equal(t, "Arch Linux LTS", ltsEntry.Title)
+	assert.Equal(t, []string{"/boot/amd-ucode.img", "/boot/initramfs-linux-lts.img"}, ltsEntry.Initrd)
+}
+
+func TestGenerateSingleMenuEntry_MultipleInitrdDirectives(t *testing.T) {
+	// Set up viper defaults for the test
+	viper.SetDefault("advanced.naming.menu_format", "2006-01-02T15:04:05Z")
+	viper.SetDefault("display.local_time", false)
+
+	generator := NewGenerator("/boot/efi")
+
+	templateEntry := &MenuEntry{
+		Icon:    "/EFI/refind/icons/os_arch.png",
+		Loader:  "/boot/vmlinuz-linux",
+		Initrd:  []string{"/boot/intel-ucode.img", "/boot/initramfs-linux.img"},
+		Options: "quiet rw rootflags=subvol=@ root=UUID=test-uuid",
+	}
+
+	snapshots := []*btrfs.Snapshot{
+		{
+			Subvolume: &btrfs.Subvolume{
+				ID:   101,
+				Path: "/.snapshots/101/snapshot",
+			},
+			SnapshotTime: time.Date(2025, 6, 12, 7, 0, 18, 0, time.UTC),
+		},
+	}
+
+	rootFS := &btrfs.Filesystem{
+		UUID: "test-uuid",
+	}
+
+	content := generator.generateSingleMenuEntry("Arch Linux", templateEntry, snapshots, rootFS)
+
+	// Should contain menuentry
+	assert.Contains(t, content, "menuentry \"Arch Linux\" {")
+
+	// Should contain all template attributes
+	assert.Contains(t, content, "    icon /EFI/refind/icons/os_arch.png")
+	assert.Contains(t, content, "    loader /boot/vmlinuz-linux")
+
+	// Should contain both initrd directives in order
+	assert.Contains(t, content, "    initrd /boot/intel-ucode.img")
+	assert.Contains(t, content, "    initrd /boot/initramfs-linux.img")
+
+	// Verify they appear in the correct order
+	ucodeIndex := strings.Index(content, "initrd /boot/intel-ucode.img")
+	initramfsIndex := strings.Index(content, "initrd /boot/initramfs-linux.img")
+	assert.True(t, ucodeIndex < initramfsIndex, "Microcode initrd should appear before main initramfs")
+
+	assert.Contains(t, content, "    options quiet rw rootflags=subvol=@ root=UUID=test-uuid")
+
+	// Should contain submenu for snapshot
+	assert.Contains(t, content, "    submenuentry \"Arch Linux (2025-06-12T07:00:18Z)\" {")
+	assert.Contains(t, content, "rootflags=subvol=@/.snapshots/101/snapshot")
+	assert.Contains(t, content, "subvolid=101")
+	assert.Contains(t, content, "root=UUID=test-uuid")
+	assert.Contains(t, content, "    }")
+
+	// Should end with closing brace
+	assert.Contains(t, content, "}")
 }

@@ -29,7 +29,7 @@ type MenuEntry struct {
 	Icon        string          `json:"icon"`
 	Volume      string          `json:"volume"`
 	Loader      string          `json:"loader"`
-	Initrd      string          `json:"initrd"`
+	Initrd      []string        `json:"initrd"`
 	Options     string          `json:"options"`
 	Submenues   []*SubmenuEntry `json:"submenues,omitempty"`
 	SourceFile  string          `json:"source_file"`
@@ -41,7 +41,7 @@ type MenuEntry struct {
 type SubmenuEntry struct {
 	Title       string       `json:"title"`
 	Loader      string       `json:"loader,omitempty"`
-	Initrd      string       `json:"initrd,omitempty"`
+	Initrd      []string     `json:"initrd,omitempty"`
 	Options     string       `json:"options,omitempty"`
 	AddOptions  string       `json:"add_options,omitempty"`
 	BootOptions *BootOptions `json:"boot_options,omitempty"`
@@ -308,7 +308,7 @@ func (p *Parser) parseMenuDirective(entry *MenuEntry, line string) {
 	case "loader":
 		entry.Loader = value
 	case "initrd":
-		entry.Initrd = value
+		entry.Initrd = append(entry.Initrd, value)
 	case "options":
 		entry.Options = value
 		entry.BootOptions = parseBootOptions(value)
@@ -332,7 +332,7 @@ func (p *Parser) parseSubmenuDirective(submenu *SubmenuEntry, line string) {
 	case "loader":
 		submenu.Loader = value
 	case "initrd":
-		submenu.Initrd = value
+		submenu.Initrd = append(submenu.Initrd, value)
 	case "options":
 		submenu.Options = value
 		submenu.BootOptions = parseBootOptions(value)
@@ -865,7 +865,7 @@ func (p *Parser) parseRefindLinuxConf(path string) ([]*MenuEntry, error) {
 			entry.Loader = loaderPath
 		}
 		if initrdPath := p.findInitrdInDir(dir); initrdPath != "" {
-			entry.Initrd = initrdPath
+			entry.Initrd = []string{initrdPath}
 		}
 
 		entries = append(entries, entry)
@@ -873,7 +873,7 @@ func (p *Parser) parseRefindLinuxConf(path string) ([]*MenuEntry, error) {
 			Str("path", path).
 			Str("title", title).
 			Str("loader", entry.Loader).
-			Str("initrd", entry.Initrd).
+			Strs("initrd", entry.Initrd).
 			Msg("Parsed refind_linux.conf entry")
 	}
 
@@ -1132,7 +1132,7 @@ func (g *Generator) mergeCustomizations(template, existing *MenuEntry) *MenuEntr
 	if existing.Loader != "" {
 		merged.Loader = existing.Loader
 	}
-	if existing.Initrd != "" {
+	if len(existing.Initrd) > 0 {
 		merged.Initrd = existing.Initrd
 	}
 	if existing.Options != "" {
@@ -1247,8 +1247,8 @@ func (g *Generator) generateSingleMenuEntry(title string, templateEntry *MenuEnt
 	if templateEntry.Loader != "" {
 		content.WriteString(fmt.Sprintf("    loader %s\n", templateEntry.Loader))
 	}
-	if templateEntry.Initrd != "" {
-		content.WriteString(fmt.Sprintf("    initrd %s\n", templateEntry.Initrd))
+	for _, initrd := range templateEntry.Initrd {
+		content.WriteString(fmt.Sprintf("    initrd %s\n", initrd))
 	}
 	if templateEntry.Options != "" {
 		content.WriteString(fmt.Sprintf("    options %s\n", templateEntry.Options))
