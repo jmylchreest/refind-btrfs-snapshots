@@ -71,6 +71,7 @@ func init() {
 	listSnapshotsCmd.Flags().Bool("show-size", false, "Show snapshot sizes (slower)")
 	listSnapshotsCmd.Flags().Bool("show-volume", false, "Show volume column (useful for multi-filesystem setups)")
 	listSnapshotsCmd.Flags().String("volume", "", "Show snapshots only for specific volume UUID or device")
+	listSnapshotsCmd.Flags().StringSlice("search-dirs", nil, "Override snapshot search directories")
 
 	// Bind flags to viper for backward compatibility
 	viper.BindPFlag("list.show_all", listCmd.Flags().Lookup("all"))
@@ -185,8 +186,12 @@ func runListSnapshots(cmd *cobra.Command, args []string) error {
 		log.Info().Msg("Calculating snapshot sizes...")
 	}
 
-	// Initialize btrfs manager
+	// Initialize btrfs manager - use flag override if provided
 	searchDirs := viper.GetStringSlice("snapshot.search_directories")
+	if flagDirs, _ := cmd.Flags().GetStringSlice("search-dirs"); len(flagDirs) > 0 {
+		searchDirs = flagDirs
+		log.Debug().Strs("search_dirs", searchDirs).Msg("Using search directories from --search-dirs flag")
+	}
 	maxDepth := viper.GetInt("snapshot.max_depth")
 	btrfsManager := btrfs.NewManager(searchDirs, maxDepth)
 
