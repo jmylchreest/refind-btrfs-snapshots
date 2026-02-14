@@ -210,15 +210,25 @@ jobs:
 
       - name: Generate changelog
         run: |
+          # Find the last stable release tag (exclude dev/pre-release tags)
+          PREV_TAG=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | head -n1 || echo "")
+
+          # For tagged releases, skip the current tag itself
+          if [[ "${{ needs.prepare.outputs.is_release }}" == "true" && "$PREV_TAG" == "${{ needs.prepare.outputs.version_tag }}" ]]; then
+            PREV_TAG=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+              | sed -n '2p' || echo "")
+          fi
+
+          echo "Previous stable tag: ${PREV_TAG:-<none>}"
+
           if [[ "${{ needs.prepare.outputs.is_release }}" == "true" ]]; then
-            PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
             if [ -n "$PREV_TAG" ]; then
               echo "## Changelog" > changelog.txt
               echo "" >> changelog.txt
               git log --pretty=format:"* %h %s" "$PREV_TAG"..HEAD | \
-                grep -v "^* [a-f0-9]* docs:" | \
-                grep -v "^* [a-f0-9]* test:" | \
-                grep -v "^* [a-f0-9]* ci:" | \
                 grep -v "^* [a-f0-9]* Merge" >> changelog.txt || echo "* No notable changes" >> changelog.txt
             else
               echo "* Initial release" > changelog.txt
@@ -230,8 +240,6 @@ jobs:
             echo "> Install the latest stable version from the [Releases](../../releases) page instead." >> changelog.txt
             echo "" >> changelog.txt
 
-            # Include recent commit log since last release tag
-            PREV_TAG=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' HEAD 2>/dev/null || echo "")
             if [ -n "$PREV_TAG" ]; then
               echo "### Changes since ${PREV_TAG}" >> changelog.txt
               echo "" >> changelog.txt
