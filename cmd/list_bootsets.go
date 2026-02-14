@@ -24,6 +24,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/fstab"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/kernel"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -158,20 +159,58 @@ func runListBootsets(cmd *cobra.Command, args []string) error {
 		snapshots = snapshots[:count]
 	}
 
-	// Compute compatibility matrix
+	// Build planner for per-snapshot boot mode detection
+	var rootFS *btrfs.Filesystem
+	if len(filesystems) > 0 {
+		rootBtrfsManager := btrfs.NewManager(searchDirs, maxDepth)
+		rootFS, _ = rootBtrfsManager.GetRootFilesystem()
+	}
+
+	fstabMgr := fstab.NewManager()
+	staleAction := kernel.ParseStaleAction(viper.GetString("kernel.stale_snapshot_action"))
+	var checker *kernel.Checker
+	if len(bootSets) > 0 {
+		checker = kernel.NewChecker(staleAction)
+	}
+	var planner *kernel.Planner
+	if rootFS != nil {
+		planner = kernel.NewPlanner(fstabMgr, checker, bootSets, rootFS)
+	}
+
+	// Compute compatibility matrix with boot mode detection
 	var matrix []snapshotCompatibility
 	if len(snapshots) > 0 && len(bootSets) > 0 {
-		staleAction := kernel.ParseStaleAction(viper.GetString("kernel.stale_snapshot_action"))
-		checker := kernel.NewChecker(staleAction)
-
 		for _, snap := range snapshots {
+			// Detect boot mode for this snapshot
+			bootMode := kernel.BootModeESP
+			if planner != nil {
+				plans := planner.Plan([]*btrfs.Snapshot{snap})
+				if len(plans) > 0 {
+					bootMode = plans[0].Mode
+				}
+			}
+
 			compat := snapshotCompatibility{
 				Snapshot: snap,
+				BootMode: bootMode,
 				Modules:  kernel.GetSnapshotModuleVersions(snap.FilesystemPath),
 			}
-			for _, bs := range bootSets {
-				result := checker.CheckSnapshot(snap.FilesystemPath, bs)
-				compat.Results = append(compat.Results, result)
+
+			if bootMode == kernel.BootModeBtrfs {
+				// Btrfs-mode: staleness not applicable, but populate results
+				// with placeholder entries so the table renders correctly
+				for range bootSets {
+					compat.Results = append(compat.Results, &kernel.StalenessResult{
+						IsStale: false,
+						Method:  "in_snapshot",
+					})
+				}
+			} else {
+				// ESP-mode: run staleness checks
+				for _, bs := range bootSets {
+					result := checker.CheckSnapshot(snap.FilesystemPath, bs)
+					compat.Results = append(compat.Results, result)
+				}
 			}
 			matrix = append(matrix, compat)
 		}
@@ -192,6 +231,7 @@ func runListBootsets(cmd *cobra.Command, args []string) error {
 // snapshotCompatibility holds one snapshot's staleness results against all boot sets.
 type snapshotCompatibility struct {
 	Snapshot *btrfs.Snapshot
+	BootMode kernel.BootMode
 	Modules  []string
 	Results  []*kernel.StalenessResult
 }
@@ -200,6 +240,7 @@ type snapshotCompatibility struct {
 type compatibilityJSON struct {
 	SnapshotPath string            `json:"snapshot_path"`
 	SnapshotTime string            `json:"snapshot_time"`
+	BootMode     string            `json:"boot_mode"`
 	Modules      []string          `json:"modules"`
 	BootSets     []compatEntryJSON `json:"boot_sets"`
 }
@@ -245,9 +286,18 @@ func outputBootsetsJSON(bootSets []*kernel.BootSet, allImages []*kernel.BootImag
 		cj := compatibilityJSON{
 			SnapshotPath: row.Snapshot.Path,
 			SnapshotTime: btrfs.FormatSnapshotTimeForDisplay(row.Snapshot.SnapshotTime, useLocalTime),
+			BootMode:     string(row.BootMode),
 			Modules:      row.Modules,
 		}
 		for i, result := range row.Results {
+			if row.BootMode == kernel.BootModeBtrfs {
+				cj.BootSets = append(cj.BootSets, compatEntryJSON{
+					KernelName: bootSets[i].KernelName,
+					Status:     "n/a",
+					Method:     "in_snapshot",
+				})
+				continue
+			}
 			status := "fresh"
 			reason := ""
 			if result.IsStale {
@@ -359,8 +409,8 @@ func outputBootsetsTable(bootSets []*kernel.BootSet, allImages []*kernel.BootIma
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 
 		// Header row
-		headers := []string{"SNAPSHOT TIME", "SNAPSHOT PATH"}
-		separators := []string{"─────────────", "─────────────"}
+		headers := []string{"SNAPSHOT TIME", "SNAPSHOT PATH", "BOOT"}
+		separators := []string{"─────────────", "─────────────", "────"}
 		for _, bs := range bootSets {
 			headers = append(headers, strings.ToUpper(bs.KernelName))
 			separators = append(separators, strings.Repeat("─", max(len(bs.KernelName), 7)))
@@ -373,10 +423,12 @@ func outputBootsetsTable(bootSets []*kernel.BootSet, allImages []*kernel.BootIma
 
 		for _, row := range matrix {
 			timeStr := btrfs.FormatSnapshotTimeForDisplay(row.Snapshot.SnapshotTime, useLocalTime)
-			cols := []string{timeStr, row.Snapshot.Path}
+			cols := []string{timeStr, row.Snapshot.Path, string(row.BootMode)}
 
 			for _, result := range row.Results {
-				if result.IsStale {
+				if row.BootMode == kernel.BootModeBtrfs {
+					cols = append(cols, "n/a")
+				} else if result.IsStale {
 					cols = append(cols, "stale")
 				} else if result.Method == kernel.MatchAssumedFresh {
 					cols = append(cols, "unknown")

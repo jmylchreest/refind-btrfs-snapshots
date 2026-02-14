@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/fstab"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/kernel"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -330,12 +331,42 @@ func runListSnapshots(cmd *cobra.Command, args []string) error {
 		bootSets = detectBootSets()
 	}
 
-	if len(bootSets) > 0 {
-		// Compute staleness for each snapshot against each boot set
-		staleAction := kernel.ParseStaleAction(viper.GetString("kernel.stale_snapshot_action"))
-		checker := kernel.NewChecker(staleAction)
+	// Get root filesystem for boot mode detection
+	searchDirsForRoot := viper.GetStringSlice("snapshot.search_directories")
+	maxDepthForRoot := viper.GetInt("snapshot.max_depth")
+	rootBtrfsManager := btrfs.NewManager(searchDirsForRoot, maxDepthForRoot)
+	rootFS, _ := rootBtrfsManager.GetRootFilesystem()
 
-		for _, info := range allSnapshots {
+	// Build planner for per-snapshot boot mode detection
+	fstabMgr := fstab.NewManager()
+	var planner *kernel.Planner
+	if rootFS != nil {
+		var checker *kernel.Checker
+		if len(bootSets) > 0 {
+			staleAction := kernel.ParseStaleAction(viper.GetString("kernel.stale_snapshot_action"))
+			checker = kernel.NewChecker(staleAction)
+		}
+		planner = kernel.NewPlanner(fstabMgr, checker, bootSets, rootFS)
+	}
+
+	// Detect boot mode and compute staleness for each snapshot
+	for _, info := range allSnapshots {
+		// Per-snapshot boot mode detection
+		if planner != nil {
+			plans := planner.Plan([]*btrfs.Snapshot{info.Snapshot})
+			if len(plans) > 0 {
+				info.BootMode = plans[0].Mode
+			}
+		}
+		if info.BootMode == "" {
+			info.BootMode = kernel.BootModeESP // default
+		}
+
+		// Staleness only applies to ESP-mode snapshots
+		if len(bootSets) > 0 && info.BootMode == kernel.BootModeESP {
+			staleAction := kernel.ParseStaleAction(viper.GetString("kernel.stale_snapshot_action"))
+			checker := kernel.NewChecker(staleAction)
+
 			for _, bs := range bootSets {
 				result := checker.CheckSnapshot(info.Snapshot.FilesystemPath, bs)
 
@@ -357,6 +388,16 @@ func runListSnapshots(cmd *cobra.Command, args []string) error {
 					Reason:          reason,
 				})
 			}
+		} else if len(bootSets) > 0 && info.BootMode == kernel.BootModeBtrfs {
+			// Btrfs-mode: kernels are in-snapshot, staleness is not applicable
+			for _, bs := range bootSets {
+				info.Staleness = append(info.Staleness, SnapshotKernelStatus{
+					KernelName:    bs.KernelName,
+					KernelVersion: bs.KernelVersion(),
+					Status:        "n/a",
+					Method:        "in_snapshot",
+				})
+			}
 		}
 	}
 
@@ -372,6 +413,7 @@ type SnapshotInfo struct {
 	Snapshot   *btrfs.Snapshot        `json:"snapshot"`
 	Filesystem *btrfs.Filesystem      `json:"filesystem"`
 	Size       string                 `json:"size,omitempty"`
+	BootMode   kernel.BootMode        `json:"boot_mode"`
 	Staleness  []SnapshotKernelStatus `json:"staleness,omitempty"`
 }
 
@@ -478,6 +520,12 @@ func outputSnapshotsTable(snapshots []*SnapshotInfo, showSize bool, showVolume b
 	headers = append(headers, timeHeader, "SNAPSHOT PATH")
 	separators = append(separators, "───────────────────", "─────────────")
 
+	// Boot mode column (always shown when we have staleness info)
+	if hasStaleness {
+		headers = append(headers, "BOOT")
+		separators = append(separators, "────")
+	}
+
 	// Add one staleness column per boot set
 	if hasStaleness {
 		for _, bs := range bootSets {
@@ -509,8 +557,10 @@ func outputSnapshotsTable(snapshots []*SnapshotInfo, showSize bool, showVolume b
 		var rowData []string
 		rowData = append(rowData, timeStr, info.Snapshot.Path)
 
-		// Add staleness columns
+		// Add boot mode and staleness columns
 		if hasStaleness {
+			rowData = append(rowData, string(info.BootMode))
+
 			modules := ""
 			for _, sk := range info.Staleness {
 				rowData = append(rowData, sk.Status)
@@ -519,7 +569,7 @@ func outputSnapshotsTable(snapshots []*SnapshotInfo, showSize bool, showVolume b
 				}
 			}
 			// Pad if fewer staleness results than boot sets (shouldn't happen, but be safe)
-			for len(rowData) < 2+len(bootSets) {
+			for len(rowData) < 3+len(bootSets) {
 				rowData = append(rowData, "-")
 			}
 			rowData = append(rowData, modules)

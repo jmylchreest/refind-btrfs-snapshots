@@ -123,6 +123,9 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 
 	logEntry.Msg("Found root btrfs filesystem")
 
+	// Log current system's boot mode (what a snapshot taken right now would be)
+	logLiveBootMode(fstabManager, rootFS)
+
 	// Find snapshots
 	snapshots, err := btrfsManager.FindSnapshots(rootFS)
 	if err != nil {
@@ -229,89 +232,44 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		log.Debug().Msg("No boot images found on ESP, staleness checking will be unavailable")
 	}
 
-	// Run staleness checks if we have boot sets
+	// Create boot plans for each snapshot (per-snapshot boot mode detection)
 	staleAction := kernel.ParseStaleAction(viper.GetString("kernel.stale_snapshot_action"))
-	stalenessChecker := kernel.NewChecker(staleAction)
-
-	// Map from snapshot path to staleness results (one per boot set)
-	type snapshotStaleness struct {
-		results []*kernel.StalenessResult
-		bootSet *kernel.BootSet
-	}
-	staleSnapshots := make(map[string][]snapshotStaleness)
-
+	var stalenessChecker *kernel.Checker
 	if len(bootSets) > 0 {
+		stalenessChecker = kernel.NewChecker(staleAction)
+	}
+
+	planner := kernel.NewPlanner(fstabManager, stalenessChecker, bootSets, rootFS)
+	allPlans := planner.Plan(processedSnapshots)
+
+	// Filter out snapshots where ALL plans have action=delete
+	if staleAction == kernel.ActionDelete {
+		plansBySnapshot := kernel.GroupBySnapshot(allPlans)
+		var filteredSnapshots []*btrfs.Snapshot
 		for _, snapshot := range processedSnapshots {
-			for _, bs := range bootSets {
-				result := stalenessChecker.CheckSnapshot(snapshot.Path, bs)
-
-				if result.IsStale {
-					staleSnapshots[snapshot.Path] = append(staleSnapshots[snapshot.Path], snapshotStaleness{
-						results: []*kernel.StalenessResult{result},
-						bootSet: bs,
-					})
-
-					logEntry := log.Warn().
-						Str("snapshot", snapshot.Path).
-						Str("kernel", bs.KernelName).
-						Str("action", string(result.Action)).
-						Str("reason", string(result.Reason)).
-						Str("method", string(result.Method))
-
-					if result.ExpectedVersion != "" {
-						logEntry.Str("expected_version", result.ExpectedVersion)
-					}
-					if len(result.SnapshotModules) > 0 {
-						logEntry.Strs("snapshot_modules", result.SnapshotModules)
-					}
-
-					logEntry.Msg("Snapshot is stale for boot kernel")
-
-					// Handle delete action — remove snapshot from processed list
-					if result.Action == kernel.ActionDelete {
-						log.Info().
-							Str("snapshot", snapshot.Path).
-							Str("kernel", bs.KernelName).
-							Msg("Skipping stale snapshot (stale_snapshot_action=delete)")
-					}
-				} else {
-					log.Debug().
-						Str("snapshot", snapshot.Path).
-						Str("kernel", bs.KernelName).
-						Str("method", string(result.Method)).
-						Msg("Snapshot is fresh for boot kernel")
+			plans := plansBySnapshot[snapshot.Path]
+			allSkip := len(plans) > 0
+			for _, p := range plans {
+				if !p.ShouldSkip() {
+					allSkip = false
+					break
 				}
+			}
+			if allSkip {
+				log.Info().Str("snapshot", snapshot.Path).Msg("Removing stale snapshot from generation (delete action)")
+			} else {
+				filteredSnapshots = append(filteredSnapshots, snapshot)
 			}
 		}
+		processedSnapshots = filteredSnapshots
 
-		// Filter out snapshots that should be deleted for ALL boot sets
-		if staleAction == kernel.ActionDelete {
-			var filteredSnapshots []*btrfs.Snapshot
-			for _, snapshot := range processedSnapshots {
-				stalePairs := staleSnapshots[snapshot.Path]
-				allStale := len(stalePairs) > 0 && len(stalePairs) == len(bootSets)
-				allDelete := true
-				for _, sp := range stalePairs {
-					for _, r := range sp.results {
-						if r.Action != kernel.ActionDelete {
-							allDelete = false
-							break
-						}
-					}
-				}
-				if allStale && allDelete {
-					log.Info().Str("snapshot", snapshot.Path).Msg("Removing stale snapshot from generation (delete action)")
-				} else {
-					filteredSnapshots = append(filteredSnapshots, snapshot)
-				}
-			}
-			processedSnapshots = filteredSnapshots
-
-			if len(processedSnapshots) == 0 {
-				log.Warn().Msg("All snapshots were stale and removed (stale_snapshot_action=delete)")
-				return nil
-			}
+		if len(processedSnapshots) == 0 {
+			log.Warn().Msg("All snapshots were stale and removed (stale_snapshot_action=delete)")
+			return nil
 		}
+
+		// Rebuild plans for the filtered snapshot list
+		allPlans = planner.Plan(processedSnapshots)
 	}
 
 	// Collect all changes in a unified patch
@@ -326,13 +284,10 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		WritableChanges:   make([]string, 0),
 	}
 
-	// Record stale snapshots in summary
-	for snapshotPath, stalePairs := range staleSnapshots {
-		for _, sp := range stalePairs {
-			for _, r := range sp.results {
-				operationSummary.StaleSnapshots = append(operationSummary.StaleSnapshots,
-					fmt.Sprintf("%s (kernel=%s, action=%s)", snapshotPath, sp.bootSet.KernelName, r.Action))
-			}
+	// Record stale snapshots in summary from boot plans
+	for _, plan := range allPlans {
+		if summary := plan.FormatStaleSummary(); summary != "" && plan.IsStale() {
+			operationSummary.StaleSnapshots = append(operationSummary.StaleSnapshots, summary)
 		}
 	}
 
@@ -394,7 +349,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		Msg("Checking valid entries")
 
 	// Generate snapshot configurations
-	generator := refind.NewGeneratorWithBootSets(espPath, kernelScanner, bootSets)
+	generator := refind.NewGeneratorWithBootPlans(espPath, kernelScanner, bootSets, allPlans)
 
 	// Separate entries by source type
 	var refindLinuxEntries []*refind.MenuEntry
@@ -701,6 +656,34 @@ func checkRootPrivileges() error {
 	}
 
 	return nil
+}
+
+// logLiveBootMode inspects the live system's /etc/fstab to determine
+// whether the currently running system has /boot embedded in btrfs or
+// on a separate partition. This tells the user what mode snapshots
+// taken right now would use.
+func logLiveBootMode(fstabMgr *fstab.Manager, rootFS *btrfs.Filesystem) {
+	liveFstab, err := fstabMgr.ParseFstab("/etc/fstab")
+	if err != nil {
+		log.Debug().Err(err).Msg("Could not parse live /etc/fstab for boot mode detection")
+		return
+	}
+
+	info := fstabMgr.AnalyzeBootMount(liveFstab, rootFS)
+
+	logEntry := log.Info()
+
+	if info.BootOnSameBtrfs {
+		logEntry.Str("boot_mode", "btrfs").
+			Msg("Live system has /boot inside btrfs (snapshots will contain their own kernels)")
+	} else {
+		logEntry.Str("boot_mode", "esp")
+		if info.Entry != nil {
+			logEntry.Str("boot_device", info.Entry.Device).
+				Str("boot_fstype", info.Entry.FSType)
+		}
+		logEntry.Msg("Live system has /boot on separate partition (snapshots depend on ESP kernels)")
+	}
 }
 
 // getFileType determines the type of file based on its path

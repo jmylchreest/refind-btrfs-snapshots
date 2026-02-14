@@ -399,9 +399,10 @@ func extractQuotedValue(line, prefix string) string {
 
 // Generator handles rEFInd config generation
 type Generator struct {
-	parser   *Parser
-	espPath  string
-	bootSets []*kernel.BootSet
+	parser    *Parser
+	espPath   string
+	bootSets  []*kernel.BootSet
+	bootPlans []*kernel.BootPlan
 }
 
 // NewGenerator creates a new rEFInd config generator
@@ -419,6 +420,18 @@ func NewGeneratorWithBootSets(espPath string, scanner *kernel.Scanner, bootSets 
 		parser:   NewParserWithScanner(espPath, scanner),
 		espPath:  espPath,
 		bootSets: bootSets,
+	}
+}
+
+// NewGeneratorWithBootPlans creates a new rEFInd config generator with detected boot sets
+// and per-snapshot boot plans. Boot plans enable btrfs-mode submenu generation where
+// kernels are loaded from inside the snapshot rather than the ESP.
+func NewGeneratorWithBootPlans(espPath string, scanner *kernel.Scanner, bootSets []*kernel.BootSet, bootPlans []*kernel.BootPlan) *Generator {
+	return &Generator{
+		parser:    NewParserWithScanner(espPath, scanner),
+		espPath:   espPath,
+		bootSets:  bootSets,
+		bootPlans: bootPlans,
 	}
 }
 
@@ -1309,6 +1322,17 @@ func (g *Generator) generateFromExistingEntries(existingEntries map[string]*Menu
 	return content.String()
 }
 
+// getBootPlanForSnapshot looks up the first boot plan for a snapshot.
+// Returns nil if no boot plans are available (falls back to ESP-mode behavior).
+func (g *Generator) getBootPlanForSnapshot(snapshot *btrfs.Snapshot) *kernel.BootPlan {
+	for _, plan := range g.bootPlans {
+		if plan.Snapshot.Path == snapshot.Path {
+			return plan
+		}
+	}
+	return nil
+}
+
 // generateSingleMenuEntry generates a single menuentry with snapshots as submenus
 func (g *Generator) generateSingleMenuEntry(title string, templateEntry *MenuEntry, snapshots []*btrfs.Snapshot, rootFS *btrfs.Filesystem) string {
 	var content strings.Builder
@@ -1338,7 +1362,19 @@ func (g *Generator) generateSingleMenuEntry(title string, templateEntry *MenuEnt
 		snapshotTitle := fmt.Sprintf("%s (%s)", title, g.getSnapshotDisplayName(snapshot))
 		content.WriteString(fmt.Sprintf("    submenuentry \"%s\" {\n", snapshotTitle))
 
-		// For submenus, we only need to modify the options to point to the snapshot
+		plan := g.getBootPlanForSnapshot(snapshot)
+		if plan != nil && plan.Mode == kernel.BootModeBtrfs {
+			// Btrfs-mode: kernel is inside the snapshot, override volume/loader/initrd
+			if plan.BtrfsVolume != "" {
+				content.WriteString(fmt.Sprintf("        volume  %s\n", plan.BtrfsVolume))
+			}
+			content.WriteString(fmt.Sprintf("        loader  %s\n", plan.SnapshotKernel))
+			for _, initrd := range plan.SnapshotInitrds {
+				content.WriteString(fmt.Sprintf("        initrd  %s\n", initrd))
+			}
+		}
+
+		// Update options to point to the snapshot subvolume (needed for both modes)
 		snapshotOptions := g.updateOptionsForSnapshot(templateEntry.Options, snapshot)
 		if snapshotOptions != "" {
 			content.WriteString(fmt.Sprintf("        options %s\n", snapshotOptions))

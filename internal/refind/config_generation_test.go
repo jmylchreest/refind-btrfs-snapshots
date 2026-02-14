@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/kernel"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -370,7 +371,7 @@ func TestGenerateSingleMenuEntry(t *testing.T) {
 	// Set up viper defaults for the test
 	viper.SetDefault("advanced.naming.menu_format", "2006-01-02T15:04:05Z")
 	viper.SetDefault("display.local_time", false)
-	
+
 	generator := NewGenerator("/boot/efi")
 
 	templateEntry := &MenuEntry{
@@ -580,4 +581,176 @@ func TestGenerateSingleMenuEntry_MultipleInitrdDirectives(t *testing.T) {
 
 	// Should end with closing brace
 	assert.Contains(t, content, "}")
+}
+
+// --- Boot Plan / Boot Mode tests for generated output ---
+
+// TestGenerateSingleMenuEntry_BtrfsMode verifies that btrfs-mode snapshots
+// generate submenu entries with volume, loader, and initrd overrides pointing
+// into the snapshot's own /boot directory.
+func TestGenerateSingleMenuEntry_BtrfsMode(t *testing.T) {
+	viper.SetDefault("advanced.naming.menu_format", "2006-01-02T15:04:05Z")
+	viper.SetDefault("display.local_time", false)
+
+	snapshot := &btrfs.Snapshot{
+		Subvolume: &btrfs.Subvolume{
+			ID:   256,
+			Path: "@/.snapshots/73/snapshot",
+		},
+		FilesystemPath: "/mnt/@/.snapshots/73/snapshot",
+		SnapshotTime:   time.Date(2025, 2, 14, 10, 0, 0, 0, time.UTC),
+	}
+
+	bootPlans := []*kernel.BootPlan{
+		{
+			Snapshot:       snapshot,
+			Mode:           kernel.BootModeBtrfs,
+			SnapshotKernel: "/@/.snapshots/73/snapshot/boot/vmlinuz-linux",
+			SnapshotInitrds: []string{
+				"/@/.snapshots/73/snapshot/boot/intel-ucode.img",
+				"/@/.snapshots/73/snapshot/boot/initramfs-linux.img",
+			},
+			BtrfsVolume: "ARCH_ROOT",
+		},
+	}
+
+	generator := NewGeneratorWithBootPlans("/boot/efi", nil, nil, bootPlans)
+
+	templateEntry := &MenuEntry{
+		Icon:    "/EFI/refind/icons/os_arch.png",
+		Loader:  "/boot/vmlinuz-linux",
+		Initrd:  []string{"/boot/intel-ucode.img", "/boot/initramfs-linux.img"},
+		Options: "quiet rw rootflags=subvol=@ root=UUID=test-uuid",
+	}
+
+	rootFS := &btrfs.Filesystem{UUID: "test-uuid"}
+	content := generator.generateSingleMenuEntry("Arch Linux", templateEntry, []*btrfs.Snapshot{snapshot}, rootFS)
+
+	// Main entry should have ESP-relative paths (the default boot entry)
+	assert.Contains(t, content, "menuentry \"Arch Linux\" {")
+	assert.Contains(t, content, "    loader /boot/vmlinuz-linux")
+
+	// Submenu entry should have btrfs-mode overrides
+	assert.Contains(t, content, "submenuentry \"Arch Linux (2025-02-14T10:00:00Z)\" {")
+	assert.Contains(t, content, "        volume  ARCH_ROOT")
+	assert.Contains(t, content, "        loader  /@/.snapshots/73/snapshot/boot/vmlinuz-linux")
+	assert.Contains(t, content, "        initrd  /@/.snapshots/73/snapshot/boot/intel-ucode.img")
+	assert.Contains(t, content, "        initrd  /@/.snapshots/73/snapshot/boot/initramfs-linux.img")
+
+	// Options should still have the snapshot subvol (needed for root mount)
+	assert.Contains(t, content, "rootflags=subvol=@/.snapshots/73/snapshot")
+	assert.Contains(t, content, "subvolid=256")
+}
+
+// TestGenerateSingleMenuEntry_ESPModeUnchangedWithBootPlans verifies that
+// ESP-mode output is byte-identical with or without boot plans present.
+// This is the backward compatibility guarantee for existing users.
+func TestGenerateSingleMenuEntry_ESPModeUnchangedWithBootPlans(t *testing.T) {
+	viper.SetDefault("advanced.naming.menu_format", "2006-01-02T15:04:05Z")
+	viper.SetDefault("display.local_time", false)
+
+	snapshot := &btrfs.Snapshot{
+		Subvolume: &btrfs.Subvolume{
+			ID:   101,
+			Path: "@/.snapshots/42/snapshot",
+		},
+		FilesystemPath: "/mnt/@/.snapshots/42/snapshot",
+		SnapshotTime:   time.Date(2025, 6, 12, 7, 0, 18, 0, time.UTC),
+	}
+
+	espPlan := &kernel.BootPlan{
+		Snapshot: snapshot,
+		Mode:     kernel.BootModeESP,
+	}
+
+	templateEntry := &MenuEntry{
+		Icon:    "/EFI/refind/icons/os_arch.png",
+		Loader:  "/boot/vmlinuz-linux",
+		Initrd:  []string{"/boot/initramfs-linux.img"},
+		Options: "quiet rw rootflags=subvol=@ root=UUID=test-uuid",
+	}
+
+	rootFS := &btrfs.Filesystem{UUID: "test-uuid"}
+
+	// Generate WITH boot plans (ESP mode plan)
+	withPlans := NewGeneratorWithBootPlans("/boot/efi", nil, nil, []*kernel.BootPlan{espPlan})
+	contentWith := withPlans.generateSingleMenuEntry("Arch Linux", templateEntry, []*btrfs.Snapshot{snapshot}, rootFS)
+
+	// Generate WITHOUT boot plans (old code path, no plans at all)
+	without := NewGenerator("/boot/efi")
+	contentWithout := without.generateSingleMenuEntry("Arch Linux", templateEntry, []*btrfs.Snapshot{snapshot}, rootFS)
+
+	// Must be byte-identical — this is the key backward compat assertion
+	assert.Equal(t, contentWithout, contentWith,
+		"ESP-mode output must be identical with or without boot plans")
+}
+
+// TestGenerateSingleMenuEntry_MixedModeSnapshots verifies correct output when
+// a menu entry has both ESP-mode and btrfs-mode snapshots as submenus —
+// simulating the ESP-to-btrfs transition scenario.
+func TestGenerateSingleMenuEntry_MixedModeSnapshots(t *testing.T) {
+	viper.SetDefault("advanced.naming.menu_format", "2006-01-02T15:04:05Z")
+	viper.SetDefault("display.local_time", false)
+
+	espSnap := &btrfs.Snapshot{
+		Subvolume: &btrfs.Subvolume{
+			ID:   101,
+			Path: "@/.snapshots/42/snapshot",
+		},
+		FilesystemPath: "/mnt/@/.snapshots/42/snapshot",
+		SnapshotTime:   time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC),
+	}
+
+	btrfsSnap := &btrfs.Snapshot{
+		Subvolume: &btrfs.Subvolume{
+			ID:   256,
+			Path: "@/.snapshots/73/snapshot",
+		},
+		FilesystemPath: "/mnt/@/.snapshots/73/snapshot",
+		SnapshotTime:   time.Date(2025, 2, 14, 10, 0, 0, 0, time.UTC),
+	}
+
+	bootPlans := []*kernel.BootPlan{
+		{Snapshot: espSnap, Mode: kernel.BootModeESP},
+		{
+			Snapshot:        btrfsSnap,
+			Mode:            kernel.BootModeBtrfs,
+			SnapshotKernel:  "/@/.snapshots/73/snapshot/boot/vmlinuz-linux",
+			SnapshotInitrds: []string{"/@/.snapshots/73/snapshot/boot/initramfs-linux.img"},
+			BtrfsVolume:     "ARCH_ROOT",
+		},
+	}
+
+	generator := NewGeneratorWithBootPlans("/boot/efi", nil, nil, bootPlans)
+
+	templateEntry := &MenuEntry{
+		Loader:  "/boot/vmlinuz-linux",
+		Initrd:  []string{"/boot/initramfs-linux.img"},
+		Options: "quiet rw rootflags=subvol=@ root=UUID=test-uuid",
+	}
+
+	rootFS := &btrfs.Filesystem{UUID: "test-uuid"}
+	content := generator.generateSingleMenuEntry("Arch Linux", templateEntry,
+		[]*btrfs.Snapshot{espSnap, btrfsSnap}, rootFS)
+
+	// ESP submenu: must NOT have volume/loader/initrd overrides
+	espSubmenu := "submenuentry \"Arch Linux (2025-01-15T12:00:00Z)\""
+	assert.Contains(t, content, espSubmenu)
+	espIdx := strings.Index(content, espSubmenu)
+	espEnd := strings.Index(content[espIdx:], "    }")
+	espSection := content[espIdx : espIdx+espEnd]
+	assert.NotContains(t, espSection, "volume  ", "ESP submenu must not have volume override")
+	assert.NotContains(t, espSection, "loader  /@/", "ESP submenu must not have btrfs loader")
+	assert.Contains(t, espSection, "rootflags=subvol=@/.snapshots/42/snapshot")
+
+	// Btrfs submenu: MUST have volume/loader/initrd overrides
+	btrfsSubmenu := "submenuentry \"Arch Linux (2025-02-14T10:00:00Z)\""
+	assert.Contains(t, content, btrfsSubmenu)
+	btrfsIdx := strings.Index(content, btrfsSubmenu)
+	btrfsEnd := strings.Index(content[btrfsIdx:], "    }")
+	btrfsSection := content[btrfsIdx : btrfsIdx+btrfsEnd]
+	assert.Contains(t, btrfsSection, "volume  ARCH_ROOT")
+	assert.Contains(t, btrfsSection, "loader  /@/.snapshots/73/snapshot/boot/vmlinuz-linux")
+	assert.Contains(t, btrfsSection, "initrd  /@/.snapshots/73/snapshot/boot/initramfs-linux.img")
+	assert.Contains(t, btrfsSection, "rootflags=subvol=@/.snapshots/73/snapshot")
 }

@@ -970,3 +970,144 @@ UUID=other /home btrfs defaults 0 2`
 		t.Error("UpdateSnapshotFstab() should preserve unrelated entries")
 	}
 }
+
+func TestManager_AnalyzeBootMount(t *testing.T) {
+	tests := []struct {
+		name                string
+		fstab               *Fstab
+		rootFS              *btrfs.Filesystem
+		wantHasSeparateBoot bool
+		wantBootOnSameBtrfs bool
+		wantEntryNil        bool
+	}{
+		{
+			name:                "nil fstab returns btrfs mode",
+			fstab:               nil,
+			rootFS:              nil,
+			wantHasSeparateBoot: false,
+			wantBootOnSameBtrfs: true,
+			wantEntryNil:        true,
+		},
+		{
+			name: "no /boot entry - part of root filesystem",
+			fstab: &Fstab{
+				Entries: []*Entry{
+					{Device: "UUID=aaaa-bbbb", Mountpoint: "/", FSType: "btrfs", Options: "subvol=@,defaults"},
+					{Device: "UUID=cccc-dddd", Mountpoint: "/home", FSType: "btrfs", Options: "subvol=@home,defaults"},
+				},
+			},
+			rootFS:              &btrfs.Filesystem{UUID: "aaaa-bbbb"},
+			wantHasSeparateBoot: false,
+			wantBootOnSameBtrfs: true,
+			wantEntryNil:        true,
+		},
+		{
+			name: "/boot on vfat (ESP mode)",
+			fstab: &Fstab{
+				Entries: []*Entry{
+					{Device: "UUID=aaaa-bbbb", Mountpoint: "/", FSType: "btrfs", Options: "subvol=@,defaults"},
+					{Device: "/dev/sda1", Mountpoint: "/boot", FSType: "vfat", Options: "defaults"},
+				},
+			},
+			rootFS:              &btrfs.Filesystem{UUID: "aaaa-bbbb"},
+			wantHasSeparateBoot: true,
+			wantBootOnSameBtrfs: false,
+			wantEntryNil:        false,
+		},
+		{
+			name: "/boot on ext4 (ESP mode)",
+			fstab: &Fstab{
+				Entries: []*Entry{
+					{Device: "UUID=aaaa-bbbb", Mountpoint: "/", FSType: "btrfs", Options: "subvol=@,defaults"},
+					{Device: "PARTUUID=1234-5678", Mountpoint: "/boot", FSType: "ext4", Options: "defaults"},
+				},
+			},
+			rootFS:              nil,
+			wantHasSeparateBoot: true,
+			wantBootOnSameBtrfs: false,
+			wantEntryNil:        false,
+		},
+		{
+			name: "/boot on same btrfs filesystem",
+			fstab: &Fstab{
+				Entries: []*Entry{
+					{Device: "UUID=aaaa-bbbb", Mountpoint: "/", FSType: "btrfs", Options: "subvol=@,defaults"},
+					{Device: "UUID=aaaa-bbbb", Mountpoint: "/boot", FSType: "btrfs", Options: "subvol=@boot,defaults"},
+				},
+			},
+			rootFS:              &btrfs.Filesystem{UUID: "aaaa-bbbb"},
+			wantHasSeparateBoot: true,
+			wantBootOnSameBtrfs: true,
+			wantEntryNil:        false,
+		},
+		{
+			name: "/boot on different btrfs filesystem",
+			fstab: &Fstab{
+				Entries: []*Entry{
+					{Device: "UUID=aaaa-bbbb", Mountpoint: "/", FSType: "btrfs", Options: "subvol=@,defaults"},
+					{Device: "UUID=xxxx-yyyy", Mountpoint: "/boot", FSType: "btrfs", Options: "subvol=@boot,defaults"},
+				},
+			},
+			rootFS:              &btrfs.Filesystem{UUID: "aaaa-bbbb"},
+			wantHasSeparateBoot: true,
+			wantBootOnSameBtrfs: false,
+			wantEntryNil:        false,
+		},
+		{
+			name: "/boot on btrfs with nil rootFS (conservative - assume different)",
+			fstab: &Fstab{
+				Entries: []*Entry{
+					{Device: "UUID=aaaa-bbbb", Mountpoint: "/", FSType: "btrfs", Options: "subvol=@,defaults"},
+					{Device: "UUID=aaaa-bbbb", Mountpoint: "/boot", FSType: "btrfs", Options: "subvol=@boot,defaults"},
+				},
+			},
+			rootFS:              nil,
+			wantHasSeparateBoot: true,
+			wantBootOnSameBtrfs: false,
+			wantEntryNil:        false,
+		},
+		{
+			name: "/boot/efi on vfat does not affect /boot detection",
+			fstab: &Fstab{
+				Entries: []*Entry{
+					{Device: "UUID=aaaa-bbbb", Mountpoint: "/", FSType: "btrfs", Options: "subvol=@,defaults"},
+					{Device: "/dev/sda1", Mountpoint: "/boot/efi", FSType: "vfat", Options: "defaults"},
+				},
+			},
+			rootFS:              &btrfs.Filesystem{UUID: "aaaa-bbbb"},
+			wantHasSeparateBoot: false,
+			wantBootOnSameBtrfs: true,
+			wantEntryNil:        true,
+		},
+		{
+			name: "empty fstab entries",
+			fstab: &Fstab{
+				Entries: []*Entry{},
+			},
+			rootFS:              nil,
+			wantHasSeparateBoot: false,
+			wantBootOnSameBtrfs: true,
+			wantEntryNil:        true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager := NewManager()
+			got := manager.AnalyzeBootMount(tt.fstab, tt.rootFS)
+
+			if got.HasSeparateBootMount != tt.wantHasSeparateBoot {
+				t.Errorf("AnalyzeBootMount() HasSeparateBootMount = %v, want %v", got.HasSeparateBootMount, tt.wantHasSeparateBoot)
+			}
+			if got.BootOnSameBtrfs != tt.wantBootOnSameBtrfs {
+				t.Errorf("AnalyzeBootMount() BootOnSameBtrfs = %v, want %v", got.BootOnSameBtrfs, tt.wantBootOnSameBtrfs)
+			}
+			if tt.wantEntryNil && got.Entry != nil {
+				t.Errorf("AnalyzeBootMount() Entry should be nil, got %+v", got.Entry)
+			}
+			if !tt.wantEntryNil && got.Entry == nil {
+				t.Error("AnalyzeBootMount() Entry should not be nil")
+			}
+		})
+	}
+}
