@@ -167,39 +167,35 @@ func (m *Manager) FindSnapshots(fs *Filesystem) ([]*Snapshot, error) {
 
 // MakeSnapshotWritable changes a snapshot's read-only property to false
 func (m *Manager) MakeSnapshotWritable(snapshot *Snapshot, r runner.Runner) error {
-	if snapshot == nil || snapshot.Subvolume == nil {
-		return fmt.Errorf("invalid snapshot provided")
-	}
-
-	err := r.Command("btrfs", []string{"property", "set", snapshot.FilesystemPath, "ro", "false"},
-		fmt.Sprintf("Make snapshot writable: %s", snapshot.Path))
-	if err != nil {
-		return fmt.Errorf("failed to make snapshot writable: %w", err)
-	}
-
-	// Update the snapshot's read-only flag (only if not dry-run)
-	if !r.IsDryRun() {
-		snapshot.IsReadOnly = false
-	}
-
-	return nil
+	return m.setSnapshotReadOnly(snapshot, false, r)
 }
 
 // MakeSnapshotReadOnly changes a snapshot's read-only property to true
 func (m *Manager) MakeSnapshotReadOnly(snapshot *Snapshot, r runner.Runner) error {
+	return m.setSnapshotReadOnly(snapshot, true, r)
+}
+
+// setSnapshotReadOnly sets the snapshot's read-only property
+func (m *Manager) setSnapshotReadOnly(snapshot *Snapshot, readOnly bool, r runner.Runner) error {
 	if snapshot == nil || snapshot.Subvolume == nil {
 		return fmt.Errorf("invalid snapshot provided")
 	}
 
-	err := r.Command("btrfs", []string{"property", "set", snapshot.FilesystemPath, "ro", "true"},
-		fmt.Sprintf("Make snapshot read-only: %s", snapshot.Path))
-	if err != nil {
-		return fmt.Errorf("failed to make snapshot read-only: %w", err)
+	roValue := "false"
+	desc := "writable"
+	if readOnly {
+		roValue = "true"
+		desc = "read-only"
 	}
 
-	// Update the snapshot's read-only flag (only if not dry-run)
+	err := r.Command("btrfs", []string{"property", "set", snapshot.FilesystemPath, "ro", roValue},
+		fmt.Sprintf("Make snapshot %s: %s", desc, snapshot.Path))
+	if err != nil {
+		return fmt.Errorf("failed to make snapshot %s: %w", desc, err)
+	}
+
 	if !r.IsDryRun() {
-		snapshot.IsReadOnly = true
+		snapshot.IsReadOnly = readOnly
 	}
 
 	return nil
@@ -554,25 +550,7 @@ func (m *Manager) findSnapshotsInDir(dir string, fs *Filesystem, depth int) ([]*
 						// subvol.Path contains the btrfs subvolume path for fstab/boot options
 						// FilesystemPath contains the filesystem path for btrfs commands and file access
 
-						// Try to parse snapper info.xml for additional metadata
-						if snapperInfo, err := m.parseSnapperInfo(entryPath); err == nil {
-							// Use snapper timestamp if available
-							if snapperTime, err := m.getSnapperTimestamp(snapperInfo.Date); err == nil {
-								snapshot.SnapshotTime = snapperTime
-							}
-							// Add snapper metadata
-							snapshot.Description = snapperInfo.Description
-							snapshot.SnapperNum = snapperInfo.Num
-							snapshot.SnapperType = snapperInfo.Type
-
-							log.Debug().
-								Str("path", snapperSnapshotPath).
-								Str("description", snapshot.Description).
-								Int("snapper_num", snapshot.SnapperNum).
-								Time("snapper_time", snapshot.SnapshotTime).
-								Msg("Found snapper snapshot")
-						}
-
+						m.applySnapperMetadata(snapshot, entryPath)
 						snapshots = append(snapshots, snapshot)
 						continue
 					}
@@ -624,32 +602,34 @@ func (m *Manager) findSnapshotsInDir(dir string, fs *Filesystem, depth int) ([]*
 			// subvol.Path contains the btrfs subvolume path for fstab/boot options
 			// FilesystemPath contains the filesystem path for btrfs commands and file access
 
-			// Try to parse snapper info.xml for additional metadata
-			if snapperInfo, err := m.parseSnapperInfo(entryPath); err == nil {
-				// Use snapper timestamp if available
-				if snapperTime, err := m.getSnapperTimestamp(snapperInfo.Date); err == nil {
-					snapshot.SnapshotTime = snapperTime
-				}
-				// Add snapper metadata
-				snapshot.Description = snapperInfo.Description
-				snapshot.SnapperNum = snapperInfo.Num
-				snapshot.SnapperType = snapperInfo.Type
-
-				log.Debug().
-					Str("path", entryPath).
-					Str("description", snapshot.Description).
-					Int("snapper_num", snapshot.SnapperNum).
-					Time("snapper_time", snapshot.SnapshotTime).
-					Msg("Found snapper metadata")
-			} else {
-				log.Debug().Err(err).Str("path", entryPath).Msg("No snapper info.xml found, using file timestamp")
-			}
-
+			m.applySnapperMetadata(snapshot, entryPath)
 			snapshots = append(snapshots, snapshot)
 		}
 	}
 
 	return snapshots, nil
+}
+
+// applySnapperMetadata enriches a snapshot with metadata from snapper's info.xml if available.
+func (m *Manager) applySnapperMetadata(snapshot *Snapshot, entryPath string) {
+	snapperInfo, err := m.parseSnapperInfo(entryPath)
+	if err != nil {
+		log.Debug().Err(err).Str("path", entryPath).Msg("No snapper info.xml found, using file timestamp")
+		return
+	}
+	if snapperTime, err := m.getSnapperTimestamp(snapperInfo.Date); err == nil {
+		snapshot.SnapshotTime = snapperTime
+	}
+	snapshot.Description = snapperInfo.Description
+	snapshot.SnapperNum = snapperInfo.Num
+	snapshot.SnapperType = snapperInfo.Type
+
+	log.Debug().
+		Str("path", snapshot.FilesystemPath).
+		Str("description", snapshot.Description).
+		Int("snapper_num", snapshot.SnapperNum).
+		Time("snapper_time", snapshot.SnapshotTime).
+		Msg("Found snapper metadata")
 }
 
 // isSnapshotOfRoot determines if a subvolume is a snapshot of the root subvolume
@@ -808,65 +788,6 @@ func getSnapshotSizeFromQgroups(path string) (string, error) {
 	return "", fmt.Errorf("subvolume not found in qgroups")
 }
 
-// getSnapshotSizeNativeWithProgress calculates snapshot size using native Go with progress indication
-func getSnapshotSizeNativeWithProgress(path string, current, total int) (string, error) {
-	var totalSize int64
-	var fileCount int64
-
-	// Start a goroutine for progress indication
-	done := make(chan struct{})
-	defer close(done)
-
-	go showProgressWithSnapshot(&fileCount, current, total, done)
-
-	// Use timeout to prevent hanging on large snapshots
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-
-	start := time.Now()
-	err := filepath.WalkDir(path, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			// Skip inaccessible files/directories instead of failing
-			return nil
-		}
-
-		// Check for timeout
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		if !d.IsDir() {
-			if info, err := d.Info(); err == nil {
-				atomic.AddInt64(&totalSize, info.Size())
-			}
-		}
-		atomic.AddInt64(&fileCount, 1)
-		return nil
-	})
-
-	// Clear progress line only at the end
-	fmt.Print("\r\033[K")
-
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return "timeout", nil
-		}
-		return "", fmt.Errorf("failed to calculate size: %w", err)
-	}
-
-	duration := time.Since(start)
-	log.Debug().
-		Int64("total_size", totalSize).
-		Int64("file_count", fileCount).
-		Dur("duration", duration).
-		Str("path", path).
-		Msg("Completed size calculation")
-
-	return formatBytes(totalSize), nil
-}
-
 // getSnapshotSizeNativeExternal calculates snapshot size using native Go with external file counter
 func getSnapshotSizeNativeExternal(path string, externalFileCount *int64) (string, error) {
 	var totalSize int64
@@ -914,32 +835,6 @@ func getSnapshotSizeNativeExternal(path string, externalFileCount *int64) (strin
 		Msg("Completed size calculation")
 
 	return formatBytes(totalSize), nil
-}
-
-// showProgressWithSnapshot displays a rotating spinner with file count and snapshot progress
-func showProgressWithSnapshot(fileCount *int64, current, total int, done chan struct{}) {
-	spinner := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-	i := 0
-
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-done:
-			return
-		case <-ticker.C:
-			count := atomic.LoadInt64(fileCount)
-			if total > 0 {
-				fmt.Printf("\r%s Calculating snapshot sizes... (%d/%d snapshots, %d files in current)",
-					spinner[i%len(spinner)], current, total, count)
-			} else {
-				fmt.Printf("\r%s Calculating snapshot size... (%d files processed)",
-					spinner[i%len(spinner)], count)
-			}
-			i++
-		}
-	}
 }
 
 // formatBytes converts bytes to human-readable format

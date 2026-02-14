@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
@@ -14,6 +15,14 @@ import (
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/params"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/viper"
+)
+
+// Package-level compiled regexps for patterns used in hot paths.
+var (
+	// legacyTimestampPattern matches titles like "Some Title (2024-01-15_12-30-00)"
+	legacyTimestampPattern = regexp.MustCompile(`^.+\s+\([^)]*\d{4}[^)]*\d{2}[^)]*\d{2}[^)]*\)$`)
+	// extractTimestampPattern matches trailing "(YYYY-MM-DD_HH-MM-SS)" in titles
+	extractTimestampPattern = regexp.MustCompile(`\s*\(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\)$`)
 )
 
 // Config represents a rEFInd configuration
@@ -628,7 +637,7 @@ func (g *Generator) generateRefindLinuxConfWithAllEntries(originalContent string
 		lines = append(lines, "##refind-btrfs-snapshots-end")
 	}
 
-	return strings.Join(lines, "\n"), nil
+	return strings.Join(lines, "\n") + "\n", nil
 }
 
 // isLegacyGeneratedSnapshotEntry checks if a line is a legacy generated snapshot entry
@@ -643,9 +652,7 @@ func (g *Generator) isLegacyGeneratedSnapshotEntry(line string) bool {
 	title := parts[0]
 
 	// Check if title matches pattern: "Some Title (TIMESTAMP)" where TIMESTAMP looks like a date/time
-	// This is more flexible than the old regex to catch various timestamp formats
-	timestampPattern := regexp.MustCompile(`^.+\s+\([^)]*\d{4}[^)]*\d{2}[^)]*\d{2}[^)]*\)$`)
-	return timestampPattern.MatchString(title)
+	return legacyTimestampPattern.MatchString(title)
 }
 
 // GenerateManagedConfigDiff generates a single managed config file with proper menuentry/submenu structure
@@ -996,8 +1003,7 @@ func (g *Generator) generateGroupKey(entry *MenuEntry) string {
 // extractBaseName extracts the base name from a title, removing timestamp patterns
 func (g *Generator) extractBaseName(title string) string {
 	// Remove common timestamp patterns like "(YYYY-MM-DD_HH-MM-SS)"
-	timestampPattern := regexp.MustCompile(`\s*\(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\)$`)
-	baseName := timestampPattern.ReplaceAllString(title, "")
+	baseName := extractTimestampPattern.ReplaceAllString(title, "")
 
 	// Clean up any trailing whitespace
 	return strings.TrimSpace(baseName)
@@ -1177,8 +1183,16 @@ func (g *Generator) generateFromExistingEntries(existingEntries map[string]*Menu
 		return content.String()
 	}
 
+	// Sort titles for deterministic output order
+	titles := make([]string, 0, len(existingEntries))
+	for title := range existingEntries {
+		titles = append(titles, title)
+	}
+	slices.Sort(titles)
+
 	first := true
-	for title, entry := range existingEntries {
+	for _, title := range titles {
+		entry := existingEntries[title]
 		if !first {
 			content.WriteString("\n")
 		}

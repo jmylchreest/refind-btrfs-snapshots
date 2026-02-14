@@ -1,6 +1,8 @@
 package runner
 
 import (
+	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -26,7 +28,15 @@ func (r *RealRunner) Command(name string, args []string, description string) err
 		Msg("Executing command")
 
 	cmd := exec.Command(name, args...)
-	return cmd.Run()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+		}
+		return err
+	}
+	return nil
 }
 
 func (r *RealRunner) WriteFile(path string, content []byte, perm os.FileMode, description string) error {

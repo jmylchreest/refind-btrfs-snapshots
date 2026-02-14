@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
@@ -385,9 +386,16 @@ func findKernelImages(bootDir string) []kernelImageSet {
 		}
 	}
 
-	// Build kernel image sets
+	// Build kernel image sets in deterministic order
+	names := make([]string, 0, len(groups))
+	for name := range groups {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+
 	var result []kernelImageSet
-	for name, g := range groups {
+	for _, name := range names {
+		g := groups[name]
 		if g.kernel == "" {
 			log.Debug().Str("kernel_name", name).Msg("Skipping kernel group with no kernel image in snapshot /boot")
 			continue

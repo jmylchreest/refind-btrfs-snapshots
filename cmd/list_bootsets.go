@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -122,48 +121,10 @@ func runListBootsets(cmd *cobra.Command, args []string) error {
 		Msg("Boot image scan complete")
 
 	// Discover snapshots for the compatibility matrix
-	searchDirs := viper.GetStringSlice("snapshot.search_directories")
-	maxDepth := viper.GetInt("snapshot.max_depth")
-	btrfsManager := btrfs.NewManager(searchDirs, maxDepth)
-
-	filesystems, err := btrfsManager.DetectBtrfsFilesystems()
-	if err != nil {
-		log.Warn().Err(err).Msg("Could not detect btrfs filesystems for compatibility matrix")
-	}
-
-	var snapshots []*btrfs.Snapshot
-	if len(filesystems) > 0 {
-		seen := make(map[string]bool)
-		for _, fs := range filesystems {
-			found, err := btrfsManager.FindSnapshots(fs)
-			if err != nil {
-				log.Warn().Err(err).Str("fs", fs.GetBestIdentifier()).Msg("Failed to find snapshots")
-				continue
-			}
-			for _, s := range found {
-				if !seen[s.Path] {
-					seen[s.Path] = true
-					snapshots = append(snapshots, s)
-				}
-			}
-		}
-	}
-
-	// Sort snapshots newest first
-	slices.SortFunc(snapshots, func(a, b *btrfs.Snapshot) int {
-		return b.SnapshotTime.Compare(a.SnapshotTime)
-	})
-
-	// Apply selection count if configured
-	if count := viper.GetInt("snapshot.selection_count"); count > 0 && len(snapshots) > count {
-		snapshots = snapshots[:count]
-	}
+	snapshots, btrfsManager := discoverSnapshots(nil)
 
 	// Build planner for per-snapshot boot mode detection
-	var rootFS *btrfs.Filesystem
-	if len(filesystems) > 0 {
-		rootFS, _ = btrfsManager.GetRootFilesystem()
-	}
+	rootFS, _ := btrfsManager.GetRootFilesystem()
 
 	fstabMgr := fstab.NewManager()
 	staleAction := kernel.ParseStaleAction(viper.GetString("kernel.stale_snapshot_action"))
@@ -270,14 +231,18 @@ func outputBootsetsJSON(bootSets []*kernel.BootSet, allImages []*kernel.BootImag
 			Fallback:      toBootImageJSON(bs.Fallback),
 		}
 		for _, mc := range bs.Microcode {
-			bsj.Microcode = append(bsj.Microcode, *toBootImageJSON(mc))
+			if j := toBootImageJSON(mc); j != nil {
+				bsj.Microcode = append(bsj.Microcode, *j)
+			}
 		}
 		out.BootSets = append(out.BootSets, bsj)
 	}
 
 	if showImages {
 		for _, img := range allImages {
-			out.Images = append(out.Images, *toBootImageJSON(img))
+			if j := toBootImageJSON(img); j != nil {
+				out.Images = append(out.Images, *j)
+			}
 		}
 	}
 

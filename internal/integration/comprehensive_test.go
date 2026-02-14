@@ -255,14 +255,15 @@ menuentry "Windows 11" {
 		deviceTypes := make(map[string]int)
 		for _, entry := range config.Entries {
 			if entry.BootOptions != nil && entry.BootOptions.Root != "" {
-				if entry.BootOptions.Root[:4] == "UUID" {
-					deviceTypes["UUID"]++
-				} else if entry.BootOptions.Root[:8] == "PARTUUID" {
+				root := entry.BootOptions.Root
+				if strings.HasPrefix(root, "PARTUUID=") {
 					deviceTypes["PARTUUID"]++
-				} else if entry.BootOptions.Root[:5] == "LABEL" {
-					deviceTypes["LABEL"]++
-				} else if entry.BootOptions.Root[:9] == "PARTLABEL" {
+				} else if strings.HasPrefix(root, "PARTLABEL=") {
 					deviceTypes["PARTLABEL"]++
+				} else if strings.HasPrefix(root, "UUID=") {
+					deviceTypes["UUID"]++
+				} else if strings.HasPrefix(root, "LABEL=") {
+					deviceTypes["LABEL"]++
 				}
 			}
 		}

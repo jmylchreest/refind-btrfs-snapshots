@@ -250,12 +250,14 @@ func (d *ESPDetector) findSysPath(deviceName string) string {
 		return sysPath
 	}
 
-	// Try as partition under various block devices
-	blockDevs := []string{"sda", "sdb", "sdc", "sdd", "nvme0n1", "nvme1n1", "nvme2n1", "vda", "vdb", "mmcblk0"}
-	for _, blockDev := range blockDevs {
-		partPath := filepath.Join("/sys/block", blockDev, deviceName)
-		if _, err := os.Stat(partPath); err == nil {
-			return partPath
+	// Try as partition under all block devices in /sys/block/
+	entries, err := os.ReadDir("/sys/block")
+	if err == nil {
+		for _, entry := range entries {
+			partPath := filepath.Join("/sys/block", entry.Name(), deviceName)
+			if _, err := os.Stat(partPath); err == nil {
+				return partPath
+			}
 		}
 	}
 

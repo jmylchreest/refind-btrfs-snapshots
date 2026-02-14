@@ -4,10 +4,24 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // whitespaceRun matches one or more whitespace characters, used for collapsing runs.
 var whitespaceRun = regexp.MustCompile(`\s+`)
+
+// regexCache caches compiled regexps keyed by pattern string.
+var regexCache sync.Map // map[string]*regexp.Regexp
+
+// cachedRegexp returns a compiled regexp for the given pattern, caching the result.
+func cachedRegexp(pattern string) *regexp.Regexp {
+	if v, ok := regexCache.Load(pattern); ok {
+		return v.(*regexp.Regexp)
+	}
+	re := regexp.MustCompile(pattern)
+	regexCache.Store(pattern, re)
+	return re
+}
 
 // ParameterParser handles parameter extraction and manipulation from option strings
 type ParameterParser struct {
@@ -31,7 +45,7 @@ func NewCommaParameterParser() *ParameterParser {
 
 // Extract extracts the value of a parameter from the given text
 func (p *ParameterParser) Extract(text, param string) string {
-	pattern := regexp.MustCompile(fmt.Sprintf(`%s=([^%s]+)`,
+	pattern := cachedRegexp(fmt.Sprintf(`%s=([^%s]+)`,
 		regexp.QuoteMeta(param), p.separators))
 	matches := pattern.FindStringSubmatch(text)
 	if len(matches) > 1 {
@@ -42,7 +56,7 @@ func (p *ParameterParser) Extract(text, param string) string {
 
 // Update replaces the value of a parameter in the given text
 func (p *ParameterParser) Update(text, param, newValue string) string {
-	pattern := regexp.MustCompile(fmt.Sprintf(`%s=([^%s]+)`,
+	pattern := cachedRegexp(fmt.Sprintf(`%s=([^%s]+)`,
 		regexp.QuoteMeta(param), p.separators))
 
 	replacement := fmt.Sprintf("%s=%s", param, newValue)
@@ -66,13 +80,13 @@ func (p *ParameterParser) Update(text, param, newValue string) string {
 
 // Has checks if a parameter exists in the text
 func (p *ParameterParser) Has(text, param string) bool {
-	pattern := regexp.MustCompile(fmt.Sprintf(`%s=`, regexp.QuoteMeta(param)))
+	pattern := cachedRegexp(fmt.Sprintf(`%s=`, regexp.QuoteMeta(param)))
 	return pattern.MatchString(text)
 }
 
 // Remove removes a parameter from the text
 func (p *ParameterParser) Remove(text, param string) string {
-	pattern := regexp.MustCompile(fmt.Sprintf(`\s*%s=([^%s]+)\s*`,
+	pattern := cachedRegexp(fmt.Sprintf(`\s*%s=([^%s]+)\s*`,
 		regexp.QuoteMeta(param), p.separators))
 	return strings.TrimSpace(pattern.ReplaceAllString(text, " "))
 }
@@ -80,7 +94,7 @@ func (p *ParameterParser) Remove(text, param string) string {
 // ExtractAll extracts all parameter key-value pairs from the text
 func (p *ParameterParser) ExtractAll(text string) map[string]string {
 	params := make(map[string]string)
-	pattern := regexp.MustCompile(`(\w+)=([^` + p.separators + `]+)`)
+	pattern := cachedRegexp(`(\w+)=([^` + p.separators + `]+)`)
 	matches := pattern.FindAllStringSubmatch(text, -1)
 
 	for _, match := range matches {
@@ -95,7 +109,7 @@ func (p *ParameterParser) ExtractAll(text string) map[string]string {
 // ExtractMultiple extracts all values for a parameter that may appear multiple times
 func (p *ParameterParser) ExtractMultiple(text, param string) []string {
 	var values []string
-	pattern := regexp.MustCompile(fmt.Sprintf(`%s=([^%s]+)`,
+	pattern := cachedRegexp(fmt.Sprintf(`%s=([^%s]+)`,
 		regexp.QuoteMeta(param), p.separators))
 	matches := pattern.FindAllStringSubmatch(text, -1)
 
@@ -110,7 +124,7 @@ func (p *ParameterParser) ExtractMultiple(text, param string) []string {
 
 // RemoveAll removes all instances of a parameter from the text
 func (p *ParameterParser) RemoveAll(text, param string) string {
-	pattern := regexp.MustCompile(fmt.Sprintf(`\s*%s=([^%s]+)`,
+	pattern := cachedRegexp(fmt.Sprintf(`\s*%s=([^%s]+)`,
 		regexp.QuoteMeta(param), p.separators))
 	result := pattern.ReplaceAllString(text, "")
 	return strings.TrimSpace(whitespaceRun.ReplaceAllString(result, " "))

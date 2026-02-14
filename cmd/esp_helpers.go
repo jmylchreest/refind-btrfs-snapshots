@@ -18,7 +18,9 @@ package cmd
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/esp"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/kernel"
 	"github.com/rs/zerolog/log"
@@ -29,6 +31,22 @@ import (
 func detectESPPath() (string, error) {
 	espUUID := viper.GetString("esp.uuid")
 	espDetector := esp.NewESPDetector(espUUID)
+
+	// Resolution order: uuid > auto_detect > mount_point
+	if espUUID != "" {
+		detectedESP, err := espDetector.FindESP()
+		if err != nil {
+			return "", fmt.Errorf("failed to find ESP by UUID %s: %w", espUUID, err)
+		}
+		if detectedESP.MountPoint == "" {
+			return "", fmt.Errorf("ESP with UUID %s is not mounted", espUUID)
+		}
+		log.Info().Str("path", detectedESP.MountPoint).Str("uuid", espUUID).Msg("Found ESP by UUID")
+		if err := espDetector.ValidateESPPath(detectedESP.MountPoint); err != nil {
+			return "", fmt.Errorf("ESP validation failed: %w", err)
+		}
+		return detectedESP.MountPoint, nil
+	}
 
 	if viper.GetBool("esp.auto_detect") {
 		detectedESP, err := espDetector.FindESP()
@@ -139,4 +157,51 @@ func detectBootSets() []*kernel.BootSet {
 
 	log.Info().Int("boot_sets", len(bootSets)).Str("esp", espPath).Msg("Detected boot configurations on ESP")
 	return bootSets
+}
+
+// discoverSnapshots detects btrfs filesystems, finds snapshots, deduplicates,
+// sorts newest-first, and applies the configured selection count. It returns
+// the discovered snapshots along with the btrfs manager for further use.
+func discoverSnapshots(searchDirOverrides []string) ([]*btrfs.Snapshot, *btrfs.Manager) {
+	searchDirs := viper.GetStringSlice("snapshot.search_directories")
+	if len(searchDirOverrides) > 0 {
+		searchDirs = searchDirOverrides
+		log.Debug().Strs("search_dirs", searchDirs).Msg("Using overridden search directories")
+	}
+	maxDepth := viper.GetInt("snapshot.max_depth")
+	btrfsManager := btrfs.NewManager(searchDirs, maxDepth)
+
+	filesystems, err := btrfsManager.DetectBtrfsFilesystems()
+	if err != nil {
+		log.Warn().Err(err).Msg("Could not detect btrfs filesystems")
+		return nil, btrfsManager
+	}
+
+	var snapshots []*btrfs.Snapshot
+	seen := make(map[string]bool)
+	for _, fs := range filesystems {
+		found, err := btrfsManager.FindSnapshots(fs)
+		if err != nil {
+			log.Warn().Err(err).Str("fs", fs.GetBestIdentifier()).Msg("Failed to find snapshots")
+			continue
+		}
+		for _, s := range found {
+			if !seen[s.Path] {
+				seen[s.Path] = true
+				snapshots = append(snapshots, s)
+			}
+		}
+	}
+
+	// Sort newest first
+	slices.SortFunc(snapshots, func(a, b *btrfs.Snapshot) int {
+		return b.SnapshotTime.Compare(a.SnapshotTime)
+	})
+
+	// Apply selection count
+	if count := viper.GetInt("snapshot.selection_count"); count > 0 && len(snapshots) > count {
+		snapshots = snapshots[:count]
+	}
+
+	return snapshots, btrfsManager
 }

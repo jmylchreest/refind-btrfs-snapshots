@@ -95,7 +95,7 @@ func initConfig() {
 		if viper.ConfigFileUsed() == "" {
 			log.Debug().Msg("No config file found, using defaults")
 		} else {
-			log.Debug().Err(err).Str("config_file", viper.ConfigFileUsed()).Msg("Config file found but failed to parse, using defaults")
+			log.Warn().Err(err).Str("config_file", viper.ConfigFileUsed()).Msg("Config file found but failed to parse, using defaults")
 		}
 	}
 }

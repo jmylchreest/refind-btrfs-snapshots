@@ -609,60 +609,6 @@ func TestManager_deviceMatches(t *testing.T) {
 	}
 }
 
-func TestManager_isValidDeviceSpec(t *testing.T) {
-	tests := []struct {
-		name   string
-		device string
-		want   bool
-	}{
-		{
-			name:   "valid UUID",
-			device: "UUID=12345678-1234-1234-1234-123456789abc",
-			want:   true,
-		},
-		{
-			name:   "invalid UUID format",
-			device: "UUID=invalid",
-			want:   false,
-		},
-		{
-			name:   "valid LABEL",
-			device: "LABEL=root",
-			want:   true,
-		},
-		{
-			name:   "empty LABEL",
-			device: "LABEL=",
-			want:   false,
-		},
-		{
-			name:   "valid device path",
-			device: "/dev/sda1",
-			want:   true,
-		},
-		{
-			name:   "special device",
-			device: "tmpfs",
-			want:   true,
-		},
-		{
-			name:   "invalid device",
-			device: "invalid",
-			want:   false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			manager := NewManager()
-			got := manager.isValidDeviceSpec(tt.device)
-			if got != tt.want {
-				t.Errorf("isValidDeviceSpec() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestManager_generateFstabContentWithModifications(t *testing.T) {
 	fstab := &Fstab{
 		Lines: []string{

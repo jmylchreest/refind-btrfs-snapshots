@@ -59,12 +59,6 @@ func init() {
 	listCmd.AddCommand(listVolumesCmd)
 	listCmd.AddCommand(listSnapshotsCmd)
 
-	// Add command-specific flags for main list command (backward compatibility)
-	listCmd.Flags().Bool("all", false, "Show all snapshots, including non-bootable ones")
-	listCmd.Flags().StringP("format", "f", "table", "Output format: table, json, yaml")
-	listCmd.Flags().Bool("show-size", false, "Calculate and show snapshot sizes (slower)")
-	listCmd.Flags().StringSlice("search-dirs", nil, "Override snapshot search directories")
-
 	// Add flags for list volumes command
 	listVolumesCmd.Flags().Bool("json", false, "Output in JSON format")
 	listVolumesCmd.Flags().Bool("show-all-ids", false, "Show all device identifiers (UUID, PARTUUID, LABEL, etc.)")
@@ -77,11 +71,6 @@ func init() {
 	listSnapshotsCmd.Flags().String("volume", "", "Show snapshots only for specific volume UUID or device")
 	listSnapshotsCmd.Flags().StringSlice("search-dirs", nil, "Override snapshot search directories")
 
-	// Bind flags to viper for backward compatibility
-	_ = viper.BindPFlag("list.show_all", listCmd.Flags().Lookup("all"))
-	_ = viper.BindPFlag("list.format", listCmd.Flags().Lookup("format"))
-	_ = viper.BindPFlag("list.show_size", listCmd.Flags().Lookup("show-size"))
-	_ = viper.BindPFlag("list.search_dirs", listCmd.Flags().Lookup("search-dirs"))
 }
 
 func runListRoot(cmd *cobra.Command, args []string) error {

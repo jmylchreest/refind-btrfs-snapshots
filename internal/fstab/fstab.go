@@ -325,46 +325,6 @@ func (m *Manager) deviceMatches(device string, rootFS *btrfs.Filesystem) bool {
 	return rootFS.MatchesDevice(device)
 }
 
-// isValidDeviceSpec checks if a device specification is valid
-func (m *Manager) isValidDeviceSpec(device string) bool {
-	// UUID format
-	if strings.HasPrefix(device, "UUID=") {
-		uuid := strings.TrimPrefix(device, "UUID=")
-		// Basic UUID format check (36 characters with hyphens)
-		return isValidUUID(uuid)
-	}
-
-	// LABEL format
-	if strings.HasPrefix(device, "LABEL=") {
-		label := strings.TrimPrefix(device, "LABEL=")
-		return label != ""
-	}
-
-	// PARTUUID format
-	if strings.HasPrefix(device, "PARTUUID=") {
-		partuuid := strings.TrimPrefix(device, "PARTUUID=")
-		return partuuid != ""
-	}
-
-	// PARTLABEL format
-	if strings.HasPrefix(device, "PARTLABEL=") {
-		partlabel := strings.TrimPrefix(device, "PARTLABEL=")
-		return partlabel != ""
-	}
-
-	// Device path format
-	if strings.HasPrefix(device, "/dev/") {
-		return true
-	}
-
-	// Special cases
-	if device == "none" || device == "tmpfs" || device == "proc" || device == "sysfs" {
-		return true
-	}
-
-	return false
-}
-
 // writeFstabWithRunner writes an fstab structure back to a file using runner, preserving formatting of unchanged lines
 func (m *Manager) writeFstabWithRunner(path string, fstab *Fstab, modifiedEntries map[string]bool, r runner.Runner) error {
 	content, err := m.generateFstabContentWithModifications(fstab, modifiedEntries)

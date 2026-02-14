@@ -372,19 +372,6 @@ func TestListCommandFlags(t *testing.T) {
 
 	require.NotNil(t, listCommand)
 
-	// Test main list command flags
-	allFlag := listCommand.Flags().Lookup("all")
-	require.NotNil(t, allFlag)
-	assert.Equal(t, "false", allFlag.DefValue)
-
-	formatFlag := listCommand.Flags().Lookup("format")
-	require.NotNil(t, formatFlag)
-	assert.Equal(t, "table", formatFlag.DefValue)
-
-	showSizeFlag := listCommand.Flags().Lookup("show-size")
-	require.NotNil(t, showSizeFlag)
-	assert.Equal(t, "false", showSizeFlag.DefValue)
-
 	// Test list volumes command flags
 	var volumesCommand *cobra.Command
 	for _, cmd := range listCommand.Commands() {

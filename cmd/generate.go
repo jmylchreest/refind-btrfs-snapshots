@@ -18,6 +18,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os/user"
 	"path/filepath"
@@ -241,6 +242,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	allPlans := planner.Plan(processedSnapshots)
 
 	// Filter out snapshots where ALL plans have action=delete
+	var removedSnapshots []string
 	if staleAction == kernel.ActionDelete {
 		plansBySnapshot := kernel.GroupBySnapshot(allPlans)
 		var filteredSnapshots []*btrfs.Snapshot
@@ -255,6 +257,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 			}
 			if allSkip {
 				log.Info().Str("snapshot", snapshot.Path).Msg("Removing stale snapshot from generation (delete action)")
+				removedSnapshots = append(removedSnapshots, snapshot.Path)
 			} else {
 				filteredSnapshots = append(filteredSnapshots, snapshot)
 			}
@@ -275,7 +278,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	operationSummary := &OperationSummary{
 		IncludedSnapshots: make([]string, 0),
 		AddedSnapshots:    make([]string, 0),
-		RemovedSnapshots:  make([]string, 0),
+		RemovedSnapshots:  removedSnapshots,
 		StaleSnapshots:    make([]string, 0),
 		UpdatedFstabs:     make([]string, 0),
 		UpdatedConfigs:    make([]string, 0),
@@ -366,12 +369,15 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	refindLinuxFiles := make(map[string][]*refind.MenuEntry)
 
 	// Group entries by their source file
+	rootSubvol := ""
+	if rootFS.Subvolume != nil {
+		rootSubvol = strings.TrimPrefix(rootFS.Subvolume.Path, "/")
+	}
 	for _, entry := range refindLinuxEntries {
-		// Only process original entries that have rootflags=subvol=@ or /@ (not our generated snapshot entries)
+		// Only process original entries whose subvol matches the root filesystem (not our generated snapshot entries)
 		if entry.BootOptions != nil && entry.BootOptions.Subvol != "" {
-			// Normalize subvol path for comparison (same logic as isBootableEntry)
 			entrySubvol := strings.TrimPrefix(entry.BootOptions.Subvol, "/")
-			if entrySubvol == "@" {
+			if entrySubvol == rootSubvol {
 				refindLinuxFiles[entry.SourceFile] = append(refindLinuxFiles[entry.SourceFile], entry)
 			}
 		}
@@ -446,15 +452,9 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 
 		}
 	} else if updatedRefindLinuxConf && len(otherEntries) > 0 {
-		if forceGenerateInclude {
-			log.Info().
-				Int("skipped_entries", len(otherEntries)).
-				Msg("Generated include file despite refind_linux.conf updates (forced with --generate-include)")
-		} else {
-			log.Info().
-				Int("skipped_entries", len(otherEntries)).
-				Msg("Skipping managed config generation - refind_linux.conf files were updated for this root volume")
-		}
+		log.Info().
+			Int("skipped_entries", len(otherEntries)).
+			Msg("Skipping managed config generation - refind_linux.conf files were updated for this root volume")
 	}
 
 	// Record included snapshots (all snapshots selected for this run)
@@ -485,7 +485,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 			}
 
 			// Apply all changes
-			if err := applyAllChanges(unifiedPatch, fstabManager, generator, rootFS, processedSnapshots, configPath, r); err != nil {
+			if err := applyAllChanges(unifiedPatch, r); err != nil {
 				return fmt.Errorf("failed to apply changes: %w", err)
 			}
 		}
@@ -536,25 +536,22 @@ func logOperationSummary(summary *OperationSummary, isDryRun bool) {
 }
 
 // applyAllChanges applies all collected changes
-func applyAllChanges(patch *diff.PatchDiff, fstabManager *fstab.Manager, generator *refind.Generator, rootFS *btrfs.Filesystem, snapshots []*btrfs.Snapshot, configPath string, r runner.Runner) error {
-	// Apply fstab changes
-	for _, snapshot := range snapshots {
-		if err := fstabManager.UpdateSnapshotFstab(snapshot, rootFS, r); err != nil {
-			log.Warn().Err(err).Str("snapshot", snapshot.Path).Msg("Failed to update snapshot fstab")
-		}
-	}
+func applyAllChanges(patch *diff.PatchDiff, r runner.Runner) error {
+	var errs []error
 
-	// Apply all file changes from the patch
+	// Apply all file changes from the patch (includes fstab diffs, config diffs, etc.)
 	for _, fileDiff := range patch.Files {
 		// Create directory if needed
 		if err := r.MkdirAll(filepath.Dir(fileDiff.Path), 0755, fmt.Sprintf("Create directory for %s", fileDiff.Path)); err != nil {
 			log.Warn().Err(err).Str("path", fileDiff.Path).Msg("Failed to create directory")
+			errs = append(errs, fmt.Errorf("mkdir %s: %w", filepath.Dir(fileDiff.Path), err))
 			continue
 		}
 
 		// Write the file
 		if err := r.WriteFile(fileDiff.Path, []byte(fileDiff.Modified), 0644, fmt.Sprintf("Write %s", fileDiff.Path)); err != nil {
 			log.Warn().Err(err).Str("path", fileDiff.Path).Msg("Failed to write file")
+			errs = append(errs, fmt.Errorf("write %s: %w", fileDiff.Path, err))
 			continue
 		}
 
@@ -563,6 +560,9 @@ func applyAllChanges(patch *diff.PatchDiff, fstabManager *fstab.Manager, generat
 		log.Info().Str("path", fileDiff.Path).Str("type", fileType).Msg("Successfully updated file")
 	}
 
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to apply %d of %d changes: %w", len(errs), len(patch.Files), errors.Join(errs...))
+	}
 	return nil
 }
 
