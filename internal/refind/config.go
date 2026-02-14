@@ -10,6 +10,7 @@ import (
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/diff"
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/kernel"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/params"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/viper"
@@ -58,13 +59,24 @@ type BootOptions struct {
 
 // Parser handles rEFInd config file parsing
 type Parser struct {
-	espPath string
+	espPath       string
+	kernelScanner *kernel.Scanner
 }
 
 // NewParser creates a new rEFInd config parser
 func NewParser(espPath string) *Parser {
 	return &Parser{
 		espPath: espPath,
+	}
+}
+
+// NewParserWithScanner creates a new rEFInd config parser with a kernel scanner
+// for pattern-based boot image detection. If scanner is nil, falls back to
+// legacy hardcoded detection.
+func NewParserWithScanner(espPath string, scanner *kernel.Scanner) *Parser {
+	return &Parser{
+		espPath:       espPath,
+		kernelScanner: scanner,
 	}
 }
 
@@ -387,8 +399,9 @@ func extractQuotedValue(line, prefix string) string {
 
 // Generator handles rEFInd config generation
 type Generator struct {
-	parser  *Parser
-	espPath string
+	parser   *Parser
+	espPath  string
+	bootSets []*kernel.BootSet
 }
 
 // NewGenerator creates a new rEFInd config generator
@@ -396,6 +409,16 @@ func NewGenerator(espPath string) *Generator {
 	return &Generator{
 		parser:  NewParser(espPath),
 		espPath: espPath,
+	}
+}
+
+// NewGeneratorWithBootSets creates a new rEFInd config generator with detected boot sets.
+// Boot sets are used for generating accurate template entries with real kernel/initramfs paths.
+func NewGeneratorWithBootSets(espPath string, scanner *kernel.Scanner, bootSets []*kernel.BootSet) *Generator {
+	return &Generator{
+		parser:   NewParserWithScanner(espPath, scanner),
+		espPath:  espPath,
+		bootSets: bootSets,
 	}
 }
 
@@ -864,11 +887,30 @@ func (p *Parser) parseRefindLinuxConf(path string) ([]*MenuEntry, error) {
 
 		// Try to infer loader and initrd from directory structure
 		dir := filepath.Dir(path)
-		if loaderPath := p.findKernelInDir(dir); loaderPath != "" {
-			entry.Loader = loaderPath
-		}
-		if initrdPath := p.findInitrdInDir(dir); initrdPath != "" {
-			entry.Initrd = []string{initrdPath}
+		if p.kernelScanner != nil {
+			// Use pattern-based scanner for comprehensive boot image detection
+			if images, err := p.kernelScanner.ScanDir(dir); err == nil {
+				for _, img := range images {
+					switch img.Role {
+					case kernel.RoleKernel:
+						if entry.Loader == "" {
+							entry.Loader = img.Path
+						}
+					case kernel.RoleInitramfs:
+						if len(entry.Initrd) == 0 {
+							entry.Initrd = []string{img.Path}
+						}
+					}
+				}
+			}
+		} else {
+			// Legacy hardcoded detection fallback
+			if loaderPath := p.findKernelInDir(dir); loaderPath != "" {
+				entry.Loader = loaderPath
+			}
+			if initrdPath := p.findInitrdInDir(dir); initrdPath != "" {
+				entry.Initrd = []string{initrdPath}
+			}
 		}
 
 		entries = append(entries, entry)
@@ -1149,7 +1191,9 @@ func (g *Generator) mergeCustomizations(template, existing *MenuEntry) *MenuEntr
 	return &merged
 }
 
-// generateTemplateEntry creates a template entry for new files
+// generateTemplateEntry creates a template entry for new files.
+// When boot sets are available (from kernel.Scanner), generates one template
+// per detected kernel with accurate paths. Falls back to hardcoded Arch defaults.
 func (g *Generator) generateTemplateEntry(sourceEntries []*MenuEntry, snapshots []*btrfs.Snapshot, rootFS *btrfs.Filesystem) string {
 	var content strings.Builder
 
@@ -1172,33 +1216,82 @@ func (g *Generator) generateTemplateEntry(sourceEntries []*MenuEntry, snapshots 
 		}
 	}
 
-	content.WriteString("menuentry \"Arch Linux\" {\n")
-	content.WriteString("    disabled\n")
-	content.WriteString("    icon     /EFI/refind/icons/os_arch.png\n")
-	content.WriteString("    loader   /boot/vmlinuz-linux\n")
-	content.WriteString("    initrd   /boot/initramfs-linux.img\n")
-	if sampleOptions != "" {
-		content.WriteString(fmt.Sprintf("    options  %s\n", sampleOptions))
-	}
-	content.WriteString("    \n")
-	content.WriteString("    # Snapshot submenus will be automatically generated below:\n")
+	// Generate template entries from detected boot sets if available
+	if len(g.bootSets) > 0 {
+		for _, bs := range g.bootSets {
+			if bs.Kernel == nil {
+				continue // Skip boot sets without a kernel
+			}
 
-	// Add example submenus
-	for i, snapshot := range snapshots {
-		if i >= 2 { // Only show first 2 as examples
-			break
+			displayName := bs.DisplayName()
+			content.WriteString(fmt.Sprintf("menuentry \"%s\" {\n", displayName))
+			content.WriteString("    disabled\n")
+			content.WriteString("    icon     /EFI/refind/icons/os_arch.png\n")
+			content.WriteString(fmt.Sprintf("    loader   %s\n", bs.Kernel.Path))
+
+			// Add microcode initrd entries first
+			for _, mc := range bs.Microcode {
+				content.WriteString(fmt.Sprintf("    initrd   %s\n", mc.Path))
+			}
+			// Add primary initramfs
+			if bs.Initramfs != nil {
+				content.WriteString(fmt.Sprintf("    initrd   %s\n", bs.Initramfs.Path))
+			}
+
+			if sampleOptions != "" {
+				content.WriteString(fmt.Sprintf("    options  %s\n", sampleOptions))
+			}
+			content.WriteString("    \n")
+			content.WriteString("    # Snapshot submenus will be automatically generated below:\n")
+
+			// Add example submenus
+			for i, snapshot := range snapshots {
+				if i >= 2 { // Only show first 2 as examples
+					break
+				}
+				snapshotTitle := fmt.Sprintf("%s (%s)", displayName, g.getSnapshotDisplayName(snapshot))
+				content.WriteString(fmt.Sprintf("    submenuentry \"%s\" {\n", snapshotTitle))
+				if sampleOptions != "" {
+					snapshotOptions := g.updateOptionsForSnapshot(sampleOptions, snapshot)
+					content.WriteString(fmt.Sprintf("        options %s\n", snapshotOptions))
+				}
+				content.WriteString("    }\n")
+			}
+
+			content.WriteString("}\n")
+			content.WriteString("\n")
 		}
-		snapshotTitle := fmt.Sprintf("Arch Linux (%s)", g.getSnapshotDisplayName(snapshot))
-		content.WriteString(fmt.Sprintf("    submenuentry \"%s\" {\n", snapshotTitle))
+	} else {
+		// Fallback to hardcoded Arch Linux defaults when no boot sets detected
+		content.WriteString("menuentry \"Arch Linux\" {\n")
+		content.WriteString("    disabled\n")
+		content.WriteString("    icon     /EFI/refind/icons/os_arch.png\n")
+		content.WriteString("    loader   /boot/vmlinuz-linux\n")
+		content.WriteString("    initrd   /boot/initramfs-linux.img\n")
 		if sampleOptions != "" {
-			snapshotOptions := g.updateOptionsForSnapshot(sampleOptions, snapshot)
-			content.WriteString(fmt.Sprintf("        options %s\n", snapshotOptions))
+			content.WriteString(fmt.Sprintf("    options  %s\n", sampleOptions))
 		}
-		content.WriteString("    }\n")
+		content.WriteString("    \n")
+		content.WriteString("    # Snapshot submenus will be automatically generated below:\n")
+
+		// Add example submenus
+		for i, snapshot := range snapshots {
+			if i >= 2 { // Only show first 2 as examples
+				break
+			}
+			snapshotTitle := fmt.Sprintf("Arch Linux (%s)", g.getSnapshotDisplayName(snapshot))
+			content.WriteString(fmt.Sprintf("    submenuentry \"%s\" {\n", snapshotTitle))
+			if sampleOptions != "" {
+				snapshotOptions := g.updateOptionsForSnapshot(sampleOptions, snapshot)
+				content.WriteString(fmt.Sprintf("        options %s\n", snapshotOptions))
+			}
+			content.WriteString("    }\n")
+		}
+
+		content.WriteString("}\n")
+		content.WriteString("\n")
 	}
 
-	content.WriteString("}\n")
-	content.WriteString("\n")
 	content.WriteString("# INSTRUCTIONS:\n")
 	content.WriteString("# 1. Remove or comment out the 'disabled' line above to enable this entry\n")
 	content.WriteString("# 2. Customize the title, icon, loader, and initrd paths for your system\n")

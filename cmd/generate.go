@@ -29,6 +29,7 @@ import (
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/diff"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/esp"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/fstab"
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/kernel"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/refind"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/runner"
 	"github.com/rs/zerolog/log"
@@ -135,6 +136,42 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("ESP path not configured and auto-detection disabled")
 	}
 
+	// Scan for boot images on the ESP using the kernel scanner
+	var bootImagePatterns []kernel.PatternConfig
+	if patterns := viper.Get("kernel.boot_image_patterns"); patterns != nil {
+		// Attempt to load custom patterns from config
+		if patternList, ok := patterns.([]interface{}); ok {
+			for _, p := range patternList {
+				if pm, ok := p.(map[string]interface{}); ok {
+					pc := kernel.PatternConfig{}
+					if g, ok := pm["glob"].(string); ok {
+						pc.Glob = g
+					}
+					if r, ok := pm["role"].(string); ok {
+						role, err := kernel.ParseImageRole(r)
+						if err != nil {
+							log.Warn().Err(err).Str("glob", pc.Glob).Msg("Invalid role in boot_image_patterns, skipping")
+							continue
+						}
+						pc.Role = role
+					}
+					if sp, ok := pm["strip_prefix"].(string); ok {
+						pc.StripPrefix = sp
+					}
+					if ss, ok := pm["strip_suffix"].(string); ok {
+						pc.StripSuffix = ss
+					}
+					if kn, ok := pm["kernel_name"].(string); ok {
+						pc.KernelName = kn
+					}
+					bootImagePatterns = append(bootImagePatterns, pc)
+				}
+			}
+		}
+	}
+	// nil/empty patterns will cause NewScanner to use DefaultPatterns()
+	kernelScanner := kernel.NewScanner(espPath, bootImagePatterns)
+
 	// Root filesystem was already retrieved above
 
 	logEntry := log.Info().
@@ -240,15 +277,145 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// Scan ESP for boot images and build boot sets
+	// Find directories containing kernels on the ESP (scan common locations)
+	var bootSets []*kernel.BootSet
+	kernelSearchDirs := []string{
+		filepath.Join(espPath, "boot"),
+		filepath.Join(espPath, "EFI", "Linux"),
+		espPath,
+	}
+
+	var allImages []*kernel.BootImage
+	for _, searchDir := range kernelSearchDirs {
+		images, err := kernelScanner.ScanDir(searchDir)
+		if err != nil {
+			log.Trace().Err(err).Str("dir", searchDir).Msg("No boot images found in directory")
+			continue
+		}
+		if len(images) > 0 {
+			allImages = append(allImages, images...)
+			log.Debug().Str("dir", searchDir).Int("count", len(images)).Msg("Found boot images")
+		}
+	}
+
+	if len(allImages) > 0 {
+		// Inspect kernel binaries for version info (best-effort)
+		kernelScanner.InspectAll(allImages)
+
+		// Group into boot sets
+		bootSets = kernelScanner.BuildBootSets(allImages)
+
+		log.Info().Int("boot_sets", len(bootSets)).Msg("Detected boot configurations on ESP")
+	} else {
+		log.Debug().Msg("No boot images found on ESP, staleness checking will be unavailable")
+	}
+
+	// Run staleness checks if we have boot sets
+	staleAction := kernel.ParseStaleAction(viper.GetString("kernel.stale_snapshot_action"))
+	stalenessChecker := kernel.NewChecker(staleAction)
+
+	// Map from snapshot path to staleness results (one per boot set)
+	type snapshotStaleness struct {
+		results []*kernel.StalenessResult
+		bootSet *kernel.BootSet
+	}
+	staleSnapshots := make(map[string][]snapshotStaleness)
+
+	if len(bootSets) > 0 {
+		for _, snapshot := range processedSnapshots {
+			for _, bs := range bootSets {
+				result := stalenessChecker.CheckSnapshot(snapshot.Path, bs)
+
+				if result.IsStale {
+					staleSnapshots[snapshot.Path] = append(staleSnapshots[snapshot.Path], snapshotStaleness{
+						results: []*kernel.StalenessResult{result},
+						bootSet: bs,
+					})
+
+					logEntry := log.Warn().
+						Str("snapshot", snapshot.Path).
+						Str("kernel", bs.KernelName).
+						Str("action", string(result.Action)).
+						Str("reason", string(result.Reason)).
+						Str("method", string(result.Method))
+
+					if result.ExpectedVersion != "" {
+						logEntry.Str("expected_version", result.ExpectedVersion)
+					}
+					if len(result.SnapshotModules) > 0 {
+						logEntry.Strs("snapshot_modules", result.SnapshotModules)
+					}
+
+					logEntry.Msg("Snapshot is stale for boot kernel")
+
+					// Handle delete action — remove snapshot from processed list
+					if result.Action == kernel.ActionDelete {
+						log.Info().
+							Str("snapshot", snapshot.Path).
+							Str("kernel", bs.KernelName).
+							Msg("Skipping stale snapshot (stale_snapshot_action=delete)")
+					}
+				} else {
+					log.Debug().
+						Str("snapshot", snapshot.Path).
+						Str("kernel", bs.KernelName).
+						Str("method", string(result.Method)).
+						Msg("Snapshot is fresh for boot kernel")
+				}
+			}
+		}
+
+		// Filter out snapshots that should be deleted for ALL boot sets
+		if staleAction == kernel.ActionDelete {
+			var filteredSnapshots []*btrfs.Snapshot
+			for _, snapshot := range processedSnapshots {
+				stalePairs := staleSnapshots[snapshot.Path]
+				allStale := len(stalePairs) > 0 && len(stalePairs) == len(bootSets)
+				allDelete := true
+				for _, sp := range stalePairs {
+					for _, r := range sp.results {
+						if r.Action != kernel.ActionDelete {
+							allDelete = false
+							break
+						}
+					}
+				}
+				if allStale && allDelete {
+					log.Info().Str("snapshot", snapshot.Path).Msg("Removing stale snapshot from generation (delete action)")
+				} else {
+					filteredSnapshots = append(filteredSnapshots, snapshot)
+				}
+			}
+			processedSnapshots = filteredSnapshots
+
+			if len(processedSnapshots) == 0 {
+				log.Warn().Msg("All snapshots were stale and removed (stale_snapshot_action=delete)")
+				return nil
+			}
+		}
+	}
+
 	// Collect all changes in a unified patch
 	unifiedPatch := diff.NewPatchDiff()
 	operationSummary := &OperationSummary{
 		IncludedSnapshots: make([]string, 0),
 		AddedSnapshots:    make([]string, 0),
 		RemovedSnapshots:  make([]string, 0),
+		StaleSnapshots:    make([]string, 0),
 		UpdatedFstabs:     make([]string, 0),
 		UpdatedConfigs:    make([]string, 0),
 		WritableChanges:   make([]string, 0),
+	}
+
+	// Record stale snapshots in summary
+	for snapshotPath, stalePairs := range staleSnapshots {
+		for _, sp := range stalePairs {
+			for _, r := range sp.results {
+				operationSummary.StaleSnapshots = append(operationSummary.StaleSnapshots,
+					fmt.Sprintf("%s (kernel=%s, action=%s)", snapshotPath, sp.bootSet.KernelName, r.Action))
+			}
+		}
 	}
 
 	// Update fstab files in snapshots
@@ -262,7 +429,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Parse rEFInd configuration
-	refindParser := refind.NewParser(espPath)
+	refindParser := refind.NewParserWithScanner(espPath, kernelScanner)
 
 	// Try to find rEFInd config automatically first
 	configPath := viper.GetString("refind.config_path")
@@ -309,7 +476,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		Msg("Checking valid entries")
 
 	// Generate snapshot configurations
-	generator := refind.NewGenerator(espPath)
+	generator := refind.NewGeneratorWithBootSets(espPath, kernelScanner, bootSets)
 
 	// Separate entries by source type
 	var refindLinuxEntries []*refind.MenuEntry
@@ -472,6 +639,7 @@ type OperationSummary struct {
 	IncludedSnapshots []string // All snapshots selected for this run
 	AddedSnapshots    []string // Snapshots actually added to configs (new ones)
 	RemovedSnapshots  []string // Snapshots removed from configs (due to cleanup/age)
+	StaleSnapshots    []string // Snapshots detected as stale
 	UpdatedFstabs     []string
 	UpdatedConfigs    []string
 	WritableChanges   []string
@@ -488,6 +656,7 @@ func logOperationSummary(summary *OperationSummary, isDryRun bool) {
 		Strs("included_snapshots", summary.IncludedSnapshots).
 		Strs("added_snapshots", summary.AddedSnapshots).
 		Strs("removed_snapshots", summary.RemovedSnapshots).
+		Strs("stale_snapshots", summary.StaleSnapshots).
 		Strs("updated_fstabs", summary.UpdatedFstabs).
 		Strs("updated_configs", summary.UpdatedConfigs).
 		Strs("writable_changes", summary.WritableChanges)
