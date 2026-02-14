@@ -87,7 +87,7 @@ Edit `/etc/refind-btrfs-snapshots.yaml`. The defaults work for most Snapper setu
 | `snapshot.search_directories` | `["/.snapshots"]` | Where to look for snapshots |
 | `snapshot.selection_count` | `0` | How many snapshots to include (0 = all) |
 | `esp.auto_detect` | `true` | Auto-detect the EFI System Partition |
-| `kernel.stale_snapshot_action` | `"warn"` | What to do with stale snapshots: `warn`, `disable`, `delete`, `fallback` |
+| `kernel.stale_snapshot_action` | `"delete"` | Stale snapshots (mismatched kernel): `delete`, `warn`, `disable`, `fallback` |
 
 See the [annotated config file](configs/refind-btrfs-snapshots.yaml) for all options, or the [Usage Guide](docs/USAGE.md#configuration-reference) for full documentation.
 
@@ -95,7 +95,7 @@ See the [annotated config file](configs/refind-btrfs-snapshots.yaml) for all opt
 
 **Q: I have `/boot` on a separate ESP partition. Will snapshots break after a kernel upgrade?**
 
-Not silently. The tool detects this (ESP mode) and checks whether each snapshot's kernel modules match the kernel on the ESP. If they don't match, the configured `stale_snapshot_action` controls what happens — warn, disable the entry, remove it, or switch to the fallback initramfs.
+Not silently. The tool detects this (ESP mode) and checks whether each snapshot's kernel modules match the kernel on the ESP. By default, stale snapshots are excluded from the boot menu (`stale_snapshot_action: delete`). You can change this to `warn` (include with a log warning), `disable` (visible but not bootable), or `fallback` (use the fallback initramfs).
 
 **Q: I have `/boot` as part of my btrfs root subvolume. Does staleness checking apply?**
 

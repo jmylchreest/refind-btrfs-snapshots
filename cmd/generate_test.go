@@ -53,7 +53,6 @@ func TestGenerateCommandFlags(t *testing.T) {
 		{"count", "0"},
 		{"dry-run", "false"},
 		{"force", "false"},
-		{"update-refind-conf", "false"},
 		{"generate-include", "false"},
 		{"yes", "false"},
 	}
@@ -68,10 +67,6 @@ func TestGenerateCommandFlags(t *testing.T) {
 	countFlag := generateCommand.Flags().ShorthandLookup("n")
 	require.NotNil(t, countFlag)
 	assert.Equal(t, "count", countFlag.Name)
-
-	configFlag := generateCommand.Flags().ShorthandLookup("c")
-	require.NotNil(t, configFlag)
-	assert.Equal(t, "config-path", configFlag.Name)
 
 	espFlag := generateCommand.Flags().ShorthandLookup("e")
 	require.NotNil(t, espFlag)
@@ -294,8 +289,8 @@ func TestIsBootableEntryWithNilSubvolume(t *testing.T) {
 func TestIsBootableEntry_SubvolumeFormats(t *testing.T) {
 	tests := []struct {
 		name           string
-		rootFSSubvol   string  // Root filesystem subvolume path
-		entrySubvol    string  // Menu entry subvol value
+		rootFSSubvol   string // Root filesystem subvolume path
+		entrySubvol    string // Menu entry subvol value
 		expectedResult bool
 		description    string
 	}{

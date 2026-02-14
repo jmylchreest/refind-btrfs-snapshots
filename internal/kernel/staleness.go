@@ -33,9 +33,9 @@ func ParseStaleAction(s string) StaleAction {
 	default:
 		log.Warn().
 			Str("value", s).
-			Str("default", string(ActionWarn)).
-			Msg("Unknown stale_snapshot_action, defaulting to 'warn'")
-		return ActionWarn
+			Str("default", string(ActionDelete)).
+			Msg("Unknown stale_snapshot_action, defaulting to 'delete'")
+		return ActionDelete
 	}
 }
 

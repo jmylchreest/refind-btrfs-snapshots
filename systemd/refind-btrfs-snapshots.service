@@ -8,7 +8,7 @@ ConditionPathExists=/etc/refind-btrfs-snapshots.yaml
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/refind-btrfs-snapshots generate -g -y -c /etc/refind-btrfs-snapshots.yaml
+ExecStart=/usr/bin/refind-btrfs-snapshots --config /etc/refind-btrfs-snapshots.yaml generate -g -y
 User=root
 StandardOutput=journal
 StandardError=journal

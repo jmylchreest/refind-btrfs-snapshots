@@ -62,12 +62,12 @@ display:
 
 # Kernel Detection & Stale Snapshot Handling
 kernel:
-  # What to do when a snapshot's kernel modules don't match the running kernel:
-  #   "warn"     - Log a warning but generate the boot entry normally (default)
-  #   "disable"  - Generate the boot entry with a 'disabled' directive
-  #   "delete"   - Skip the boot entry entirely (not generated)
+  # What to do when a snapshot's kernel modules don't match the ESP kernel:
+  #   "delete"   - Skip the boot entry entirely — stale snapshots won't appear in the menu (default)
+  #   "warn"     - Log a warning but generate the boot entry normally
+  #   "disable"  - Generate the boot entry with a 'disabled' directive (visible but not bootable)
   #   "fallback" - Use the fallback initramfs (auto-downgrades to 'disable' if unavailable)
-  stale_snapshot_action: "warn"
+  stale_snapshot_action: "delete"
 
   # Boot image detection patterns (optional - sensible defaults cover Arch, Debian, Fedora, Gentoo)
   # Uncomment and customize only if your system uses non-standard kernel/initramfs filenames.

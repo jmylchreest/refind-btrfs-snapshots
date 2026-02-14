@@ -50,12 +50,11 @@ func init() {
 	rootCmd.AddCommand(generateCmd)
 
 	// Add command-specific flags
-	generateCmd.Flags().StringP("config-path", "c", "", "Path to rEFInd main config file")
+	generateCmd.Flags().String("config-path", "", "Path to rEFInd main config file")
 	generateCmd.Flags().StringP("esp-path", "e", "", "Path to ESP mount point")
 	generateCmd.Flags().IntP("count", "n", 0, "Number of snapshots to include (0 = all snapshots)")
 	generateCmd.Flags().Bool("dry-run", false, "Show what would be done without making changes")
 	generateCmd.Flags().Bool("force", false, "Force generation even if booted from snapshot")
-	generateCmd.Flags().Bool("update-refind-conf", false, "Update main rEFInd config file")
 	generateCmd.Flags().BoolP("generate-include", "g", false, "Force generation of refind-btrfs-snapshots.conf for inclusion into refind.conf")
 	generateCmd.Flags().BoolP("yes", "y", false, "Automatically approve all changes without prompting")
 
@@ -65,7 +64,6 @@ func init() {
 	viper.BindPFlag("snapshot.selection_count", generateCmd.Flags().Lookup("count"))
 	viper.BindPFlag("dry_run", generateCmd.Flags().Lookup("dry-run"))
 	viper.BindPFlag("force", generateCmd.Flags().Lookup("force"))
-	viper.BindPFlag("update_refind_conf", generateCmd.Flags().Lookup("update-refind-conf"))
 	viper.BindPFlag("generate_include", generateCmd.Flags().Lookup("generate-include"))
 	viper.BindPFlag("yes", generateCmd.Flags().Lookup("yes"))
 }

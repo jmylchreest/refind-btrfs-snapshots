@@ -93,13 +93,12 @@ sudo refind-btrfs-snapshots generate [flags]
 
 | Flag | Short | Description |
 |------|-------|-------------|
-| `--config-path` | `-c` | Path to rEFInd main config file |
+| `--config-path` | | Path to rEFInd main config file |
 | `--count` | `-n` | Number of snapshots to include (0 = all) |
 | `--dry-run` | | Show what would be done without making changes |
 | `--esp-path` | `-e` | Path to ESP mount point |
 | `--force` | | Force generation even if booted from snapshot |
 | `--generate-include` | `-g` | Force generation of `refind-btrfs-snapshots.conf` include file |
-| `--update-refind-conf` | | Update main rEFInd config file |
 | `--yes` | `-y` | Automatically approve all changes without prompting |
 
 **Examples:**
@@ -111,8 +110,8 @@ sudo refind-btrfs-snapshots generate --dry-run --count 5
 # Generate include file and auto-approve
 sudo refind-btrfs-snapshots generate -g -y
 
-# Use custom config with debug logging
-sudo refind-btrfs-snapshots generate -c /path/to/refind.conf --log-level debug
+# Use custom rEFInd config path with debug logging
+sudo refind-btrfs-snapshots generate --config-path /path/to/refind.conf --log-level debug
 
 # Force operation even if booted from snapshot
 sudo refind-btrfs-snapshots generate --force --dry-run
@@ -242,7 +241,7 @@ esp:
 | | `behavior.cleanup_old_snapshots` | `true` | Clean up old writable snapshots |
 | **Display** | `display.local_time` | `false` | Display times in local time instead of UTC |
 | **Logging** | `log_level` | `"info"` | Log verbosity: `trace`, `debug`, `info`, `warn`, `error` |
-| **Kernel** | `kernel.stale_snapshot_action` | `"warn"` | Action for stale snapshots: `warn`, `disable`, `delete`, `fallback` |
+| **Kernel** | `kernel.stale_snapshot_action` | `"delete"` | Action for stale snapshots: `delete`, `warn`, `disable`, `fallback` |
 | | `kernel.boot_image_patterns` | *(built-in)* | Custom boot image patterns (see config file) |
 | **Advanced** | `advanced.naming.rwsnap_format` | `"2006-01-02_15-04-05"` | Timestamp format for writable snapshot filenames |
 | | `advanced.naming.menu_format` | `"2006-01-02T15:04:05Z"` | Timestamp format for menu entry titles |
@@ -282,9 +281,9 @@ Configure via `kernel.stale_snapshot_action` in your config file:
 
 | Action | Behaviour |
 |--------|-----------|
-| `warn` (default) | Logs a warning, generates the boot entry normally |
+| `delete` (default) | Skips the boot entry entirely — stale snapshots won't appear in the menu |
+| `warn` | Logs a warning, generates the boot entry normally |
 | `disable` | Generates the boot entry with a `disabled` directive (visible but not bootable) |
-| `delete` | Skips the boot entry entirely — it will not appear in the menu |
 | `fallback` | Uses the fallback initramfs; auto-downgrades to `disable` if no fallback exists |
 
 ### Boot Image Patterns
@@ -409,7 +408,7 @@ sudo systemctl edit refind-btrfs-snapshots.service
 ```ini
 [Service]
 ExecStart=
-ExecStart=/usr/bin/refind-btrfs-snapshots generate -g -y -n 10 -c /etc/custom-config.yaml
+ExecStart=/usr/bin/refind-btrfs-snapshots --config /etc/custom-config.yaml generate -g -y -n 10
 ```
 
 ## Integration Examples
@@ -543,7 +542,7 @@ sudo refind-btrfs-snapshots generate --dry-run --log-level debug
 Configure the action:
 ```yaml
 kernel:
-  stale_snapshot_action: "disable"  # or "warn", "delete", "fallback"
+  stale_snapshot_action: "delete"  # or "warn", "disable", "fallback"
 ```
 
 ### Permission Errors

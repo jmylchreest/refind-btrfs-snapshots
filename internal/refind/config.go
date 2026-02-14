@@ -921,14 +921,18 @@ func (p *Parser) parseRefindLinuxConf(path string) ([]*MenuEntry, error) {
 	return entries, scanner.Err()
 }
 
-// parseQuotedLine parses a line with quoted strings, handling escapes
+// parseQuotedLine parses a line with quoted strings, handling escapes.
+// Uses an index-based loop so the index can be advanced by the unquoted-
+// string branch (range loops ignore mutations of the loop variable).
 func (p *Parser) parseQuotedLine(line string) []string {
 	var parts []string
 	var current strings.Builder
 	inQuotes := false
 	escaped := false
 
-	for i, char := range line {
+	for i := 0; i < len(line); i++ {
+		char := rune(line[i])
+
 		if escaped {
 			current.WriteRune(char)
 			escaped = false
@@ -959,16 +963,15 @@ func (p *Parser) parseQuotedLine(line string) []string {
 			// Skip whitespace outside quotes
 			continue
 		} else {
-			// Start of unquoted string
+			// Start of unquoted string — consume until whitespace or quote
 			current.WriteRune(char)
-			// Read until next space or quote
-			for j := i + 1; j < len(line); j++ {
-				nextChar := rune(line[j])
-				if nextChar == ' ' || nextChar == '\t' || nextChar == '"' {
+			for i+1 < len(line) {
+				next := rune(line[i+1])
+				if next == ' ' || next == '\t' || next == '"' {
 					break
 				}
-				current.WriteRune(nextChar)
-				i = j
+				current.WriteRune(next)
+				i++
 			}
 			parts = append(parts, current.String())
 			current.Reset()

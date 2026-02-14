@@ -30,9 +30,9 @@ func TestParseStaleAction_Valid(t *testing.T) {
 }
 
 func TestParseStaleAction_Invalid(t *testing.T) {
-	// Should default to ActionWarn
-	assert.Equal(t, ActionWarn, ParseStaleAction("bogus"))
-	assert.Equal(t, ActionWarn, ParseStaleAction(""))
+	// Should default to ActionDelete
+	assert.Equal(t, ActionDelete, ParseStaleAction("bogus"))
+	assert.Equal(t, ActionDelete, ParseStaleAction(""))
 }
 
 // --- Checker tests ---

@@ -121,7 +121,7 @@ func setDefaults() {
 	viper.SetDefault("behavior.cleanup_old_snapshots", true)
 
 	// Kernel detection & staleness
-	viper.SetDefault("kernel.stale_snapshot_action", "warn")
+	viper.SetDefault("kernel.stale_snapshot_action", "delete")
 	// kernel.boot_image_patterns is intentionally left unset so DefaultPatterns() is used
 
 	// Logging
