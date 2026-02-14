@@ -120,6 +120,10 @@ func setDefaults() {
 	viper.SetDefault("behavior.exit_on_snapshot_boot", true)
 	viper.SetDefault("behavior.cleanup_old_snapshots", true)
 
+	// Kernel detection & staleness
+	viper.SetDefault("kernel.stale_snapshot_action", "warn")
+	// kernel.boot_image_patterns is intentionally left unset so DefaultPatterns() is used
+
 	// Logging
 	viper.SetDefault("log_level", "info")
 

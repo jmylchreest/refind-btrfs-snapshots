@@ -1,0 +1,43 @@
+# Maintainer: {{AUR_MAINTAINER}}
+
+pkgname='refind-btrfs-snapshots-bin'
+pkgver={{VERSION}}
+pkgrel=1
+pkgdesc='Generate rEFInd boot entries for btrfs snapshots (prebuilt binaries)'
+url='https://github.com/jmylchreest/refind-btrfs-snapshots'
+arch=('aarch64' 'x86_64')
+license=('GPL-3.0-or-later')
+depends=('btrfs-progs' 'util-linux')
+provides=('refind-btrfs-snapshots')
+conflicts=('refind-btrfs-snapshots')
+backup=('etc/refind-btrfs-snapshots.yaml')
+
+_github_url="https://github.com/jmylchreest/refind-btrfs-snapshots"
+
+# Common sources (config, systemd units, license)
+source=(
+    "refind-btrfs-snapshots.yaml::https://raw.githubusercontent.com/jmylchreest/refind-btrfs-snapshots/v${pkgver}/configs/refind-btrfs-snapshots.yaml"
+    "refind-btrfs-snapshots.service::${_github_url}/releases/download/v${pkgver}/refind-btrfs-snapshots.service"
+    "refind-btrfs-snapshots.path::${_github_url}/releases/download/v${pkgver}/refind-btrfs-snapshots.path"
+    "LICENSE-${pkgver}::https://raw.githubusercontent.com/jmylchreest/refind-btrfs-snapshots/v${pkgver}/LICENSE"
+)
+
+# Architecture-specific binary sources
+source_x86_64=(
+    "refind-btrfs-snapshots-${pkgver}-x86_64::${_github_url}/releases/download/v${pkgver}/refind-btrfs-snapshots-linux-amd64"
+)
+source_aarch64=(
+    "refind-btrfs-snapshots-${pkgver}-aarch64::${_github_url}/releases/download/v${pkgver}/refind-btrfs-snapshots-linux-arm64"
+)
+
+sha256sums=('{{SHA256_CONFIG}}' '{{SHA256_SERVICE}}' '{{SHA256_PATH}}' '{{SHA256_LICENSE}}')
+sha256sums_x86_64=('{{SHA256_BINARY_AMD64}}')
+sha256sums_aarch64=('{{SHA256_BINARY_ARM64}}')
+
+package() {
+    install -Dm755 "refind-btrfs-snapshots-${pkgver}-${CARCH}" "${pkgdir}/usr/bin/refind-btrfs-snapshots"
+    install -Dm644 "refind-btrfs-snapshots.yaml" "${pkgdir}/etc/refind-btrfs-snapshots.yaml"
+    install -Dm644 "refind-btrfs-snapshots.service" "${pkgdir}/usr/lib/systemd/system/refind-btrfs-snapshots.service"
+    install -Dm644 "refind-btrfs-snapshots.path" "${pkgdir}/usr/lib/systemd/system/refind-btrfs-snapshots.path"
+    install -Dm644 "LICENSE-${pkgver}" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

@@ -1,0 +1,354 @@
+# Build workflow for refind-btrfs-snapshots
+# - On version tags (v*): Create a release, publish to AUR
+# - On main branch: Create a pre-release snapshot with dev version
+# - On PRs: Build and test only
+#
+# Note: This workflow does NOT run on main branch pushes if the commit is
+# also tagged. Tags take precedence - the tag-triggered run creates the release.
+
+name: Build Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      snapshot_retention:
+        description: "Number of snapshot pre-releases to keep"
+        required: false
+        default: "1"
+        type: string
+
+# Cancel in-progress runs for the same ref
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SNAPSHOT_RETENTION: ${{ inputs.snapshot_retention || '1' }}
+
+permissions:
+  contents: write
+
+jobs:
+  # ─── Stage 1: Version computation ─────────────────────────────────────
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      version_tag: ${{ steps.version.outputs.version_tag }}
+      is_release: ${{ steps.version.outputs.is_release }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+      should_skip: ${{ steps.skip.outputs.should_skip }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version
+        id: version
+        uses: jmylchreest/gha-extract-git-version@v1
+
+      - name: Check skip conditions
+        id: skip
+        run: |
+          SHOULD_SKIP=false
+
+          # For main branch: skip if commit already has a release tag
+          if [[ "${{ github.ref }}" == refs/heads/main && "${{ steps.version.outputs.is_tagged }}" == "true" ]]; then
+            echo "Commit already has release tag, skipping main branch build"
+            SHOULD_SKIP=true
+          fi
+
+          echo "should_skip=${SHOULD_SKIP}" >> $GITHUB_OUTPUT
+
+          echo "Version: ${{ steps.version.outputs.version }}"
+          echo "Version Tag: ${{ steps.version.outputs.version_tag }}"
+          echo "Is Release: ${{ steps.version.outputs.is_release }}"
+          echo "Is Prerelease: ${{ steps.version.outputs.is_prerelease }}"
+          echo "Should Skip: ${SHOULD_SKIP}"
+
+  # ─── Stage 2: Test ────────────────────────────────────────────────────
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: prepare
+    if: needs.prepare.outputs.should_skip != 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: true
+
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Build
+        run: go build -v ./...
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Install staticcheck
+        run: go install honnef.co/go/tools/cmd/staticcheck@latest
+
+      - name: Run staticcheck
+        run: staticcheck ./...
+
+      - name: Run tests
+        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.out
+        continue-on-error: true
+
+  # ─── Stage 3: Build (linux/amd64 + linux/arm64) ───────────────────────
+  build:
+    name: Build (linux/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    needs: [prepare, test]
+    if: needs.prepare.outputs.should_skip != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [amd64, arm64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: true
+
+      - name: Build binary
+        env:
+          CGO_ENABLED: 0
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          COMMIT="${{ github.sha }}"
+          DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          go build -ldflags "-s -w \
+            -X 'github.com/jmylchreest/refind-btrfs-snapshots/cmd.Version=${VERSION}' \
+            -X 'github.com/jmylchreest/refind-btrfs-snapshots/cmd.Commit=${COMMIT}' \
+            -X 'github.com/jmylchreest/refind-btrfs-snapshots/cmd.BuildTime=${DATE}'" \
+            -o "dist/refind-btrfs-snapshots" .
+
+      - name: Prepare distribution
+        run: |
+          mkdir -p dist/assets
+
+          # Standalone binary (for -bin AUR package)
+          cp dist/refind-btrfs-snapshots dist/assets/refind-btrfs-snapshots-linux-${{ matrix.goarch }}
+
+          # Archive with configs and systemd units
+          tar czf "dist/assets/refind-btrfs-snapshots_${{ needs.prepare.outputs.version }}_linux_${{ matrix.goarch }}.tar.gz" \
+            -C dist refind-btrfs-snapshots \
+            -C "${{ github.workspace }}" configs/ systemd/ LICENSE
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: refind-btrfs-snapshots_linux_${{ matrix.goarch }}
+          path: dist/assets/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # ─── Stage 4: Create Release ──────────────────────────────────────────
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [prepare, build]
+    if: needs.prepare.outputs.should_skip != 'true' && github.event_name == 'push'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: false
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+
+          # Copy systemd units (for AUR direct download)
+          cp systemd/refind-btrfs-snapshots.service release/
+          cp systemd/refind-btrfs-snapshots.path release/
+
+          # Move all build artifacts to release folder
+          find artifacts -type f \( -name "*.tar.gz" -o -name "refind-btrfs-snapshots-linux-*" \) -exec mv {} release/ \;
+
+          echo "=== Release assets ==="
+          ls -la release/
+
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum * > checksums.txt
+          echo "=== Checksums ==="
+          cat checksums.txt
+
+      - name: Generate changelog
+        run: |
+          if [[ "${{ needs.prepare.outputs.is_release }}" == "true" ]]; then
+            PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+            if [ -n "$PREV_TAG" ]; then
+              echo "## Changelog" > changelog.txt
+              echo "" >> changelog.txt
+              git log --pretty=format:"* %h %s" "$PREV_TAG"..HEAD | \
+                grep -v "^* [a-f0-9]* docs:" | \
+                grep -v "^* [a-f0-9]* test:" | \
+                grep -v "^* [a-f0-9]* ci:" | \
+                grep -v "^* [a-f0-9]* Merge" >> changelog.txt || echo "* No notable changes" >> changelog.txt
+            else
+              echo "* Initial release" > changelog.txt
+            fi
+          else
+            cat > changelog.txt <<'EOF'
+          **Automated snapshot build from main branch**
+
+          This is an unstable development build. Use at your own risk.
+          Install the latest stable version from the [Releases](../../releases) page instead.
+          EOF
+          fi
+          echo "=== Changelog ==="
+          cat changelog.txt
+
+      - name: Create release
+        run: |
+          if [[ "${{ needs.prepare.outputs.is_release }}" == "true" ]]; then
+            gh release create "${{ needs.prepare.outputs.version_tag }}" \
+              --title "${{ needs.prepare.outputs.version_tag }}" \
+              --notes-file changelog.txt \
+              release/*
+          else
+            gh release create "${{ needs.prepare.outputs.version_tag }}" \
+              --title "Snapshot ${{ needs.prepare.outputs.version }}" \
+              --prerelease \
+              --notes-file changelog.txt \
+              release/*
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Save checksums for publishing jobs
+        uses: actions/upload-artifact@v4
+        with:
+          name: checksums
+          path: release/checksums.txt
+          retention-days: 1
+
+      - name: Cleanup old snapshot releases
+        if: needs.prepare.outputs.is_release != 'true'
+        run: |
+          RETENTION=${{ env.SNAPSHOT_RETENTION }}
+          echo "Keeping ${RETENTION} most recent snapshot releases"
+
+          # List snapshot prereleases (dev tags), newest first
+          SNAPSHOTS=$(gh release list --limit 50 --json tagName,isPrerelease \
+            --jq '.[] | select(.isPrerelease) | select(.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-dev\\.")) | .tagName')
+
+          COUNT=0
+          for TAG in $SNAPSHOTS; do
+            COUNT=$((COUNT + 1))
+            if [ $COUNT -gt $RETENTION ]; then
+              echo "Deleting old snapshot release: ${TAG}"
+              gh release delete "${TAG}" --yes --cleanup-tag || true
+            fi
+          done
+
+          echo "Cleanup complete. Kept ${RETENTION} most recent snapshots."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─── Stage 5: Publish to AUR (tagged releases only) ───────────────────
+  publish-aur:
+    name: Publish to AUR
+    runs-on: ubuntu-latest
+    needs: [prepare, release]
+    if: needs.prepare.outputs.is_release == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download checksums
+        uses: actions/download-artifact@v4
+        with:
+          name: checksums
+          path: checksums
+
+      - name: Extract checksums
+        id: checksums
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          CHECKSUM_FILE="checksums/checksums.txt"
+
+          # Extract checksums for binaries
+          SHA256_BINARY_AMD64=$(grep "refind-btrfs-snapshots-linux-amd64$" "$CHECKSUM_FILE" | awk '{print $1}')
+          SHA256_BINARY_ARM64=$(grep "refind-btrfs-snapshots-linux-arm64$" "$CHECKSUM_FILE" | awk '{print $1}')
+
+          # Extract checksums for common files
+          SHA256_SERVICE=$(grep "refind-btrfs-snapshots.service$" "$CHECKSUM_FILE" | awk '{print $1}')
+          SHA256_PATH=$(grep "refind-btrfs-snapshots.path$" "$CHECKSUM_FILE" | awk '{print $1}')
+
+          # Get config and license checksums from GitHub raw (these aren't in the release assets)
+          SHA256_CONFIG=$(curl -sL "https://raw.githubusercontent.com/jmylchreest/refind-btrfs-snapshots/v${VERSION}/configs/refind-btrfs-snapshots.yaml" | sha256sum | awk '{print $1}')
+          SHA256_LICENSE=$(curl -sL "https://raw.githubusercontent.com/jmylchreest/refind-btrfs-snapshots/v${VERSION}/LICENSE" | sha256sum | awk '{print $1}')
+
+          echo "SHA256_BINARY_AMD64=${SHA256_BINARY_AMD64}" >> $GITHUB_OUTPUT
+          echo "SHA256_BINARY_ARM64=${SHA256_BINARY_ARM64}" >> $GITHUB_OUTPUT
+          echo "SHA256_SERVICE=${SHA256_SERVICE}" >> $GITHUB_OUTPUT
+          echo "SHA256_PATH=${SHA256_PATH}" >> $GITHUB_OUTPUT
+          echo "SHA256_CONFIG=${SHA256_CONFIG}" >> $GITHUB_OUTPUT
+          echo "SHA256_LICENSE=${SHA256_LICENSE}" >> $GITHUB_OUTPUT
+
+          echo "=== Extracted checksums ==="
+          cat "$CHECKSUM_FILE"
+
+      - name: Generate PKGBUILD
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          mkdir -p aur/refind-btrfs-snapshots-bin
+
+          sed -e "s/{{VERSION}}/${VERSION}/g" \
+              -e "s/{{AUR_MAINTAINER}}/${{ secrets.AUR_MAINTAINER }}/g" \
+              -e "s/{{SHA256_BINARY_AMD64}}/${{ steps.checksums.outputs.SHA256_BINARY_AMD64 }}/g" \
+              -e "s/{{SHA256_BINARY_ARM64}}/${{ steps.checksums.outputs.SHA256_BINARY_ARM64 }}/g" \
+              -e "s/{{SHA256_SERVICE}}/${{ steps.checksums.outputs.SHA256_SERVICE }}/g" \
+              -e "s/{{SHA256_PATH}}/${{ steps.checksums.outputs.SHA256_PATH }}/g" \
+              -e "s/{{SHA256_CONFIG}}/${{ steps.checksums.outputs.SHA256_CONFIG }}/g" \
+              -e "s/{{SHA256_LICENSE}}/${{ steps.checksums.outputs.SHA256_LICENSE }}/g" \
+              contrib/aur/refind-btrfs-snapshots-bin/PKGBUILD.template > aur/refind-btrfs-snapshots-bin/PKGBUILD
+
+          echo "=== Generated PKGBUILD ==="
+          cat aur/refind-btrfs-snapshots-bin/PKGBUILD
+
+      - name: Publish to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v4.1.1
+        with:
+          pkgname: refind-btrfs-snapshots-bin
+          pkgbuild: aur/refind-btrfs-snapshots-bin/PKGBUILD
+          commit_username: github-actions[bot]
+          commit_email: github-actions[bot]@users.noreply.github.com
+          ssh_private_key: ${{ secrets.AUR_KEY }}
+          commit_message: "Update to ${{ needs.prepare.outputs.version }}"
