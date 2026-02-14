@@ -10,6 +10,8 @@
 
 - **Automatic Snapshot Discovery**: Scans configured directories (like `/.snapshots`) to find btrfs snapshots
 - **Intelligent ESP Detection**: Automatically locates your EFI System Partition using multiple detection methods
+- **Kernel Staleness Detection**: Detects when a snapshot's kernel modules no longer match the running kernel (e.g., after a kernel upgrade) and takes configurable action (warn, disable, delete, or fallback)
+- **Boot Image Scanning**: Automatically discovers kernels, initramfs, fallback initramfs, and microcode images with support for Arch, Debian/Ubuntu, Fedora, Gentoo, and generic naming conventions
 - **Flexible Boot Entry Generation**: Creates boot entries via `refind_linux.conf` updates or standalone include files
 - **Snapshot Management**: Handles read-only snapshots by either toggling flags or creating writable copies
 - **Safety Features**: Prevents accidental operation when booted from snapshots
@@ -20,19 +22,24 @@
 ### How It Works
 
 1. **Detection Phase**: Discovers btrfs volumes, snapshots, and ESP location
-2. **Analysis Phase**: Determines optimal configuration method (refind_linux.conf vs include files)
-3. **Generation Phase**: Creates boot entries with proper kernel parameters and initrd paths
-4. **Validation Phase**: Shows unified diff of all changes before applying
-5. **Application Phase**: Updates configuration files atomically
+2. **Kernel Scan Phase**: Scans the ESP for boot images, groups them into boot sets by kernel name, inspects kernel binaries for version info, and checks each snapshot for matching kernel modules
+3. **Analysis Phase**: Determines optimal configuration method (refind_linux.conf vs include files)
+4. **Generation Phase**: Creates boot entries with proper kernel parameters and initrd paths, applying staleness actions (warn/disable/delete/fallback) as configured
+5. **Validation Phase**: Shows unified diff of all changes before applying
+6. **Application Phase**: Updates configuration files atomically
 
 ## Installation
 
 ### From GitHub Releases (Recommended)
 
 ```bash
-# Download latest release
+# Download latest release (amd64)
 curl -L -o refind-btrfs-snapshots \
-  "https://github.com/jmylchreest/refind-btrfs-snapshots/releases/latest/download/refind-btrfs-snapshots_linux_amd64"
+  "https://github.com/jmylchreest/refind-btrfs-snapshots/releases/latest/download/refind-btrfs-snapshots-linux-amd64"
+
+# For arm64 systems:
+# curl -L -o refind-btrfs-snapshots \
+#   "https://github.com/jmylchreest/refind-btrfs-snapshots/releases/latest/download/refind-btrfs-snapshots-linux-arm64"
 
 # Make executable and install
 chmod +x refind-btrfs-snapshots
@@ -44,10 +51,10 @@ sudo curl -L -o /etc/refind-btrfs-snapshots.yaml \
   "https://github.com/jmylchreest/refind-btrfs-snapshots/raw/main/configs/refind-btrfs-snapshots.yaml"
 
 # Install systemd units (optional)
-sudo curl -L -o /etc/systemd/system/refind-btrfs-snapshots.service \
-  "https://github.com/jmylchreest/refind-btrfs-snapshots/raw/main/systemd/refind-btrfs-snapshots.service"
-sudo curl -L -o /etc/systemd/system/refind-btrfs-snapshots.path \
-  "https://github.com/jmylchreest/refind-btrfs-snapshots/raw/main/systemd/refind-btrfs-snapshots.path"
+sudo curl -L -o /usr/lib/systemd/system/refind-btrfs-snapshots.service \
+  "https://github.com/jmylchreest/refind-btrfs-snapshots/releases/latest/download/refind-btrfs-snapshots.service"
+sudo curl -L -o /usr/lib/systemd/system/refind-btrfs-snapshots.path \
+  "https://github.com/jmylchreest/refind-btrfs-snapshots/releases/latest/download/refind-btrfs-snapshots.path"
 ```
 
 ### From Source
@@ -176,6 +183,9 @@ esp:
 |                         | `display.local_time`                | `false`                      | Display times in local time instead of UTC              |
 | **Logging**             |                                     |                              |                                                          |
 |                         | `log_level`                         | `"info"`                     | Log verbosity: `trace`, `debug`, `info`, `warn`, `error` |
+| **Kernel Detection**    |                                     |                              |                                                          |
+|                         | `kernel.stale_snapshot_action`      | `"warn"`                     | Action for stale snapshots: `warn`, `disable`, `delete`, `fallback` |
+|                         | `kernel.boot_image_patterns`        | *(built-in defaults)*        | Custom boot image patterns (see config file for format) |
 | **Advanced Options**    |                                     |                              |                                                          |
 |                         | `advanced.naming.rwsnap_format`     | `"2006-01-02_15-04-05"`      | Timestamp format for writable snapshot filenames       |
 |                         | `advanced.naming.menu_format`       | `"2006-01-02T15:04:05Z"`     | Timestamp format for menu entry titles                  |
@@ -318,6 +328,75 @@ menu_format: "Jan 02, 2006 15:04"          # → "Jun 14, 2025 17:32"
 menu_format: "btrfs snapshot: YYYY/MM/DD-HH:mm"  # → "btrfs snapshot: 2025/06/14-17:32"
 menu_format: "snapshot-YYYY-MM-DD"               # → "snapshot-2025-06-14"
 ```
+
+## Kernel Detection & Staleness
+
+### The Problem
+
+On systems where `/boot` resides on a separate partition (typically the ESP), kernel images are not captured by btrfs snapshots. After a kernel upgrade, older snapshots may reference kernel modules that no longer exist on disk, resulting in unbootable snapshot entries.
+
+### How It Works
+
+During generation, refind-btrfs-snapshots performs the following pipeline:
+
+1. **Scan**: Discovers boot images on the ESP (kernels, initramfs, fallback initramfs, microcode) using configurable glob patterns
+2. **Inspect**: Reads kernel binary headers (bzImage format) to extract the exact kernel version string
+3. **Group**: Assembles boot images into "boot sets" by kernel name (e.g., `linux`, `linux-lts`, `linux-zen`)
+4. **Check**: For each snapshot, enumerates `/lib/modules/` inside the snapshot and compares against the boot set's expected kernel version
+
+### Staleness Match Methods
+
+The checker uses a three-tier strategy (best available wins):
+
+| Method | Source | Reliability |
+|--------|--------|-------------|
+| **Binary header** | Reads kernel version from bzImage header, matches against snapshot `/lib/modules/<version>/` directories | Highest — exact version match |
+| **Pkgbase** | Reads `/lib/modules/<version>/pkgbase` in the snapshot, matches against boot set kernel name | High — Arch Linux specific |
+| **Assumed fresh** | Neither method available | Lowest — assumes snapshot is bootable with a logged warning |
+
+### Stale Snapshot Actions
+
+Configure via `kernel.stale_snapshot_action` in your config file:
+
+| Action | Behaviour |
+|--------|-----------|
+| `warn` (default) | Logs a warning, generates the boot entry normally |
+| `disable` | Generates the boot entry with a `disabled` directive (visible in rEFInd but not bootable) |
+| `delete` | Skips the boot entry entirely — it will not appear in the menu |
+| `fallback` | Uses the fallback initramfs instead of the primary one; auto-downgrades to `disable` if no fallback exists |
+
+### Boot Image Patterns
+
+Built-in defaults cover most distributions:
+
+- **Arch Linux**: `vmlinuz-*`, `initramfs-*.img`, `initramfs-*-fallback.img`
+- **Debian/Ubuntu**: `vmlinuz-*`, `initrd.img-*`
+- **Generic**: `vmlinuz`, `vmlinuz.efi`, `bzImage`, `initrd.img`, `initrd`, `initramfs.img`
+- **Microcode**: `intel-ucode.img`, `amd-ucode.img`
+
+For non-standard naming, override patterns in the config file:
+
+```yaml
+kernel:
+  boot_image_patterns:
+    - glob: "vmlinuz-*"
+      role: kernel
+      strip_prefix: "vmlinuz-"
+    - glob: "initramfs-*.img"
+      role: initramfs
+      strip_prefix: "initramfs-"
+      strip_suffix: ".img"
+    - glob: "initramfs-*-fallback.img"
+      role: fallback_initramfs
+      strip_prefix: "initramfs-"
+      strip_suffix: "-fallback.img"
+```
+
+Each pattern supports:
+- `glob` — filename glob to match
+- `role` — one of `kernel`, `initramfs`, `fallback_initramfs`, `microcode`
+- `strip_prefix` / `strip_suffix` — removed from the filename to derive the kernel name
+- `kernel_name` — explicit override when stripping isn't possible (e.g., generic `vmlinuz`)
 
 ## Include File Management
 
@@ -580,6 +659,28 @@ sudo refind-btrfs-snapshots generate
 ls -la /boot/efi/EFI/refind/
 ```
 
+**Stale Snapshot Entries:**
+
+If snapshots are being marked stale or entries are missing after a kernel upgrade:
+
+```bash
+# Check what boot images are detected and their versions
+sudo refind-btrfs-snapshots generate --dry-run --log-level debug
+
+# Look for "stale" or "modules" messages in debug output
+# The debug log shows: scan results, boot sets, kernel versions,
+# snapshot module versions, and match method used
+
+# To keep entries visible but non-bootable:
+# Set in /etc/refind-btrfs-snapshots.yaml:
+#   kernel:
+#     stale_snapshot_action: "disable"
+
+# To silently remove stale entries:
+#   kernel:
+#     stale_snapshot_action: "delete"
+```
+
 **Time Display Issues:**
 
 ```bash
@@ -601,6 +702,8 @@ sudo refind-btrfs-snapshots generate --log-level debug --dry-run
 This will show:
 - ESP detection process
 - Snapshot discovery details
+- Boot image scanning and kernel version inspection
+- Staleness check results per snapshot (match method, module versions)
 - Time parsing and formatting
 - Configuration resolution
 - Boot entry generation logic
