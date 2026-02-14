@@ -224,12 +224,20 @@ jobs:
               echo "* Initial release" > changelog.txt
             fi
           else
-            cat > changelog.txt <<'EOF'
-          **Automated snapshot build from main branch**
+            echo "> **Automated snapshot build from main branch**" > changelog.txt
+            echo ">" >> changelog.txt
+            echo "> This is an unstable development build. Use at your own risk." >> changelog.txt
+            echo "> Install the latest stable version from the [Releases](../../releases) page instead." >> changelog.txt
+            echo "" >> changelog.txt
 
-          This is an unstable development build. Use at your own risk.
-          Install the latest stable version from the [Releases](../../releases) page instead.
-          EOF
+            # Include recent commit log since last release tag
+            PREV_TAG=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' HEAD 2>/dev/null || echo "")
+            if [ -n "$PREV_TAG" ]; then
+              echo "### Changes since ${PREV_TAG}" >> changelog.txt
+              echo "" >> changelog.txt
+              git log --pretty=format:"* %h %s" "$PREV_TAG"..HEAD | \
+                grep -v "^* [a-f0-9]* Merge" >> changelog.txt || echo "* No notable changes" >> changelog.txt
+            fi
           fi
           echo "=== Changelog ==="
           cat changelog.txt
