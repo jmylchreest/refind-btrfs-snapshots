@@ -949,19 +949,11 @@ func formatBytes(bytes int64) string {
 		return fmt.Sprintf("%d B", bytes)
 	}
 
+	units := []string{"KiB", "MiB", "GiB", "TiB", "PiB"}
 	div, exp := int64(unit), 0
-	for n := bytes / unit; n >= unit; n /= unit {
+	for n := bytes / unit; n >= unit && exp < len(units)-1; n /= unit {
 		div *= unit
 		exp++
-	}
-
-	units := []string{"B", "KiB", "MiB", "GiB", "TiB", "PiB"}
-	if exp >= len(units) {
-		exp = len(units) - 1
-		div = int64(1)
-		for i := 0; i < exp; i++ {
-			div *= unit
-		}
 	}
 
 	return fmt.Sprintf("%.1f %s", float64(bytes)/float64(div), units[exp])

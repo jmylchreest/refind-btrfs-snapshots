@@ -754,3 +754,67 @@ func TestGenerateSingleMenuEntry_MixedModeSnapshots(t *testing.T) {
 	assert.Contains(t, btrfsSection, "initrd  /@/.snapshots/73/snapshot/boot/initramfs-linux.img")
 	assert.Contains(t, btrfsSection, "rootflags=subvol=@/.snapshots/73/snapshot")
 }
+
+func TestIsLegacyGeneratedSnapshotEntry(t *testing.T) {
+	generator := NewGenerator("/boot/efi")
+
+	tests := []struct {
+		name     string
+		line     string
+		expected bool
+	}{
+		// Should match: generated entries with timestamp in parens
+		{
+			"snapshot_with_date",
+			`"Boot default (2026-02-14 12:30:00)" "root=UUID=abc rootflags=subvol=@/.snapshots/42/snapshot"`,
+			true,
+		},
+		{
+			"snapshot_short_date",
+			`"Arch Linux (2026-02-14)" "root=UUID=abc rootflags=subvol=@/.snapshots/1/snapshot"`,
+			true,
+		},
+		// Should NOT match: normal user entries
+		{
+			"normal_boot_entry",
+			`"Boot default" "root=UUID=abc rootflags=subvol=@"`,
+			false,
+		},
+		{
+			"no_parentheses",
+			`"Arch Linux" "root=UUID=abc rootflags=subvol=@"`,
+			false,
+		},
+		{
+			"empty_line",
+			"",
+			false,
+		},
+		{
+			"comment_line",
+			`# This is a comment`,
+			false,
+		},
+		{
+			"parens_without_timestamp",
+			`"Boot (recovery mode)" "root=UUID=abc single"`,
+			false,
+		},
+		{
+			"parens_with_year_but_no_full_date",
+			`"Kernel (version 6.19.0-2024)" "root=UUID=abc"`,
+			false, // regex requires year + two 2-digit groups (month/day-like)
+		},
+		{
+			"parens_with_full_date_like_pattern",
+			`"Arch Linux (2026-02-14 12:30)" "root=UUID=abc rootflags=subvol=@/.snapshots/99/snapshot"`,
+			true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, generator.isLegacyGeneratedSnapshotEntry(tt.line))
+		})
+	}
+}

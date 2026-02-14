@@ -276,3 +276,23 @@ func TestMatchMethod_FallsToAssumedFresh(t *testing.T) {
 	assert.False(t, result.IsStale)
 	assert.Equal(t, MatchAssumedFresh, result.Method)
 }
+
+func TestStalenessResult_StatusString(t *testing.T) {
+	tests := []struct {
+		name     string
+		result   StalenessResult
+		expected string
+	}{
+		{"stale", StalenessResult{IsStale: true, Method: MatchBinaryHeader}, "stale"},
+		{"stale_assumed_fresh", StalenessResult{IsStale: true, Method: MatchAssumedFresh}, "stale"},
+		{"fresh_exact", StalenessResult{IsStale: false, Method: MatchBinaryHeader}, "fresh"},
+		{"fresh_pkgbase", StalenessResult{IsStale: false, Method: MatchPkgbase}, "fresh"},
+		{"unknown", StalenessResult{IsStale: false, Method: MatchAssumedFresh}, "unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.result.StatusString())
+		})
+	}
+}

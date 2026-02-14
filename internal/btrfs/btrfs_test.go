@@ -282,7 +282,7 @@ Snapshot(s):`
 
 func TestFormatSnapshotTimeForDisplay(t *testing.T) {
 	testTime := time.Date(2025, 6, 14, 10, 0, 2, 0, time.UTC)
-	
+
 	tests := []struct {
 		name      string
 		localTime bool
@@ -310,7 +310,7 @@ func TestFormatSnapshotTimeForDisplay(t *testing.T) {
 
 func TestFormatSnapshotTimeForMenu(t *testing.T) {
 	testTime := time.Date(2025, 6, 14, 10, 0, 2, 0, time.UTC)
-	
+
 	tests := []struct {
 		name      string
 		format    string
@@ -347,7 +347,7 @@ func TestFormatSnapshotTimeForMenu(t *testing.T) {
 
 func TestFormatSnapshotTimeForRwsnap(t *testing.T) {
 	testTime := time.Date(2025, 6, 14, 10, 0, 2, 0, time.UTC)
-	
+
 	tests := []struct {
 		name      string
 		format    string
@@ -384,7 +384,7 @@ func TestFormatSnapshotTimeForRwsnap(t *testing.T) {
 
 func TestGetSnapperTimestamp(t *testing.T) {
 	manager := NewManager([]string{}, 0)
-	
+
 	tests := []struct {
 		name        string
 		dateStr     string
@@ -414,14 +414,14 @@ func TestGetSnapperTimestamp(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := manager.getSnapperTimestamp(tt.dateStr)
-			
+
 			if tt.expectError {
 				assert.Error(t, err)
 				return
 			}
-			
+
 			assert.NoError(t, err)
-			
+
 			if tt.expectedUTC {
 				assert.Equal(t, time.UTC, result.Location())
 			}
@@ -431,7 +431,7 @@ func TestGetSnapperTimestamp(t *testing.T) {
 
 func TestLooksLikeSnapshot(t *testing.T) {
 	manager := NewManager([]string{"/.snapshots"}, 0)
-	
+
 	tests := []struct {
 		name     string
 		subvol   *Subvolume
@@ -490,6 +490,84 @@ func TestLooksLikeSnapshot(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := manager.looksLikeSnapshot(tt.subvol)
 			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestFormatBytes(t *testing.T) {
+	tests := []struct {
+		bytes    int64
+		expected string
+	}{
+		{0, "0 B"},
+		{1, "1 B"},
+		{512, "512 B"},
+		{1023, "1023 B"},
+		{1024, "1.0 KiB"},
+		{1536, "1.5 KiB"},
+		{1048576, "1.0 MiB"},
+		{1073741824, "1.0 GiB"},
+		{1099511627776, "1.0 TiB"},
+		{1125899906842624, "1.0 PiB"},
+		{2 * 1073741824, "2.0 GiB"},
+		{500 * 1048576, "500.0 MiB"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			assert.Equal(t, tt.expected, formatBytes(tt.bytes))
+		})
+	}
+}
+
+func TestIsSnapshotBootFromRootFS(t *testing.T) {
+	manager := NewManager(nil, 0)
+
+	tests := []struct {
+		name     string
+		rootFS   *Filesystem
+		expected bool
+	}{
+		{
+			name:     "nil_subvolume",
+			rootFS:   &Filesystem{Subvolume: nil},
+			expected: false,
+		},
+		{
+			name:     "root_subvolume",
+			rootFS:   &Filesystem{Subvolume: &Subvolume{Path: "@"}},
+			expected: false,
+		},
+		{
+			name:     "snapper_snapshot_path",
+			rootFS:   &Filesystem{Subvolume: &Subvolume{Path: "@/.snapshots/42/snapshot"}},
+			expected: true,
+		},
+		{
+			name:     "rwsnap_path",
+			rootFS:   &Filesystem{Subvolume: &Subvolume{Path: "@/rwsnap_42"}},
+			expected: true,
+		},
+		{
+			name:     "is_snapshot_flag",
+			rootFS:   &Filesystem{Subvolume: &Subvolume{Path: "@custom", IsSnapshot: true}},
+			expected: true,
+		},
+		{
+			name:     "normal_subvolume",
+			rootFS:   &Filesystem{Subvolume: &Subvolume{Path: "@home"}},
+			expected: false,
+		},
+		{
+			name:     "snapshot_in_name",
+			rootFS:   &Filesystem{Subvolume: &Subvolume{Path: "my-snapshot-vol"}},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, manager.IsSnapshotBootFromRootFS(tt.rootFS))
 		})
 	}
 }

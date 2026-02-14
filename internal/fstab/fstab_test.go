@@ -1111,3 +1111,35 @@ func TestManager_AnalyzeBootMount(t *testing.T) {
 		})
 	}
 }
+
+func TestIsValidUUID(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{"valid_lowercase", "12345678-1234-1234-1234-123456789abc", true},
+		{"valid_uppercase", "12345678-1234-1234-1234-123456789ABC", true},
+		{"valid_mixed_case", "aAbBcCdD-eEfF-0011-2233-445566778899", true},
+		{"empty", "", false},
+		{"too_short", "12345678-1234-1234-1234", false},
+		{"too_long", "12345678-1234-1234-1234-123456789abcd", false},
+		{"missing_hyphen_pos8", "123456781234-1234-1234-123456789abc", false},
+		{"missing_hyphen_pos13", "12345678-12341234-1234-123456789abc", false},
+		{"missing_hyphen_pos18", "12345678-1234-12341234-123456789abc", false},
+		{"missing_hyphen_pos23", "12345678-1234-1234-1234123456789abc", false},
+		{"non_hex_char_g", "g2345678-1234-1234-1234-123456789abc", false},
+		{"non_hex_char_z", "1234567z-1234-1234-1234-123456789abc", false},
+		{"spaces", "12345678 1234 1234 1234 123456789abc", false},
+		{"all_zeros", "00000000-0000-0000-0000-000000000000", true},
+		{"all_f", "ffffffff-ffff-ffff-ffff-ffffffffffff", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isValidUUID(tt.input); got != tt.expected {
+				t.Errorf("isValidUUID(%q) = %v, want %v", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
