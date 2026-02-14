@@ -27,7 +27,6 @@ import (
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/diff"
-	"github.com/jmylchreest/refind-btrfs-snapshots/internal/esp"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/fstab"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/kernel"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/refind"
@@ -101,76 +100,13 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Detect ESP
-	espUUID := viper.GetString("esp.uuid")
-	espDetector := esp.NewESPDetector(espUUID)
-
-	var espPath string
-	if viper.GetBool("esp.auto_detect") {
-		// Find ESP once and reuse the result
-		detectedESP, err := espDetector.FindESP()
-		if err != nil {
-			return fmt.Errorf("failed to detect ESP: %w", err)
-		}
-
-		if detectedESP.MountPoint == "" {
-			return fmt.Errorf("ESP is not mounted")
-		}
-
-		espPath = detectedESP.MountPoint
-		log.Info().Str("path", espPath).Msg("Auto-detected ESP path")
-
-		// Validate ESP access using the detected ESP path
-		if err := espDetector.ValidateESPPath(detectedESP.MountPoint); err != nil {
-			return fmt.Errorf("ESP validation failed: %w", err)
-		}
-	} else if viper.GetString("esp.mount_point") != "" {
-		espPath = viper.GetString("esp.mount_point")
-		log.Info().Str("path", espPath).Msg("Using configured ESP path")
-
-		// Validate manually configured ESP path
-		detector := esp.NewESPDetector("")
-		if err := detector.ValidateESPPath(espPath); err != nil {
-			return fmt.Errorf("ESP validation failed: %w", err)
-		}
-	} else {
-		return fmt.Errorf("ESP path not configured and auto-detection disabled")
+	espPath, err := detectESPPath()
+	if err != nil {
+		return err
 	}
 
-	// Scan for boot images on the ESP using the kernel scanner
-	var bootImagePatterns []kernel.PatternConfig
-	if patterns := viper.Get("kernel.boot_image_patterns"); patterns != nil {
-		// Attempt to load custom patterns from config
-		if patternList, ok := patterns.([]interface{}); ok {
-			for _, p := range patternList {
-				if pm, ok := p.(map[string]interface{}); ok {
-					pc := kernel.PatternConfig{}
-					if g, ok := pm["glob"].(string); ok {
-						pc.Glob = g
-					}
-					if r, ok := pm["role"].(string); ok {
-						role, err := kernel.ParseImageRole(r)
-						if err != nil {
-							log.Warn().Err(err).Str("glob", pc.Glob).Msg("Invalid role in boot_image_patterns, skipping")
-							continue
-						}
-						pc.Role = role
-					}
-					if sp, ok := pm["strip_prefix"].(string); ok {
-						pc.StripPrefix = sp
-					}
-					if ss, ok := pm["strip_suffix"].(string); ok {
-						pc.StripSuffix = ss
-					}
-					if kn, ok := pm["kernel_name"].(string); ok {
-						pc.KernelName = kn
-					}
-					bootImagePatterns = append(bootImagePatterns, pc)
-				}
-			}
-		}
-	}
-	// nil/empty patterns will cause NewScanner to use DefaultPatterns()
-	kernelScanner := kernel.NewScanner(espPath, bootImagePatterns)
+	// Build kernel scanner from config
+	kernelScanner := buildKernelScanner(espPath)
 
 	// Root filesystem was already retrieved above
 
@@ -278,26 +214,8 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Scan ESP for boot images and build boot sets
-	// Find directories containing kernels on the ESP (scan common locations)
 	var bootSets []*kernel.BootSet
-	kernelSearchDirs := []string{
-		filepath.Join(espPath, "boot"),
-		filepath.Join(espPath, "EFI", "Linux"),
-		espPath,
-	}
-
-	var allImages []*kernel.BootImage
-	for _, searchDir := range kernelSearchDirs {
-		images, err := kernelScanner.ScanDir(searchDir)
-		if err != nil {
-			log.Trace().Err(err).Str("dir", searchDir).Msg("No boot images found in directory")
-			continue
-		}
-		if len(images) > 0 {
-			allImages = append(allImages, images...)
-			log.Debug().Str("dir", searchDir).Int("count", len(images)).Msg("Found boot images")
-		}
-	}
+	allImages := scanBootImages(espPath, kernelScanner)
 
 	if len(allImages) > 0 {
 		// Inspect kernel binaries for version info (best-effort)

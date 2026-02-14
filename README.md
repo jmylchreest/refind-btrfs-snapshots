@@ -253,6 +253,7 @@ sudo refind-btrfs-snapshots list [command] [flags]
 
 - `volumes` - List all btrfs filesystems/volumes
 - `snapshots` - List all snapshots for detected volumes
+- `bootsets` - List detected boot image sets on the ESP
 
 **Flags:**
 
@@ -275,6 +276,15 @@ sudo refind-btrfs-snapshots list snapshots --all --show-size -f json
 
 # Use custom search directories
 sudo refind-btrfs-snapshots list snapshots --search-dirs "/.snapshots,/timeshift/snapshots"
+
+# Show detected boot sets (kernels, initramfs, microcode grouped by kernel name)
+sudo refind-btrfs-snapshots list bootsets
+
+# Show individual boot images alongside boot sets
+sudo refind-btrfs-snapshots list bootsets --show-images
+
+# JSON output for scripting
+sudo refind-btrfs-snapshots list bootsets --json
 ```
 
 ### `version`
