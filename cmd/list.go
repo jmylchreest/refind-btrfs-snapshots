@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/kernel"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -70,6 +71,7 @@ func init() {
 	listSnapshotsCmd.Flags().Bool("json", false, "Output in JSON format")
 	listSnapshotsCmd.Flags().Bool("show-size", false, "Show snapshot sizes (slower)")
 	listSnapshotsCmd.Flags().Bool("show-volume", false, "Show volume column (useful for multi-filesystem setups)")
+	listSnapshotsCmd.Flags().Bool("no-staleness", false, "Skip kernel staleness detection (faster, no ESP access needed)")
 	listSnapshotsCmd.Flags().String("volume", "", "Show snapshots only for specific volume UUID or device")
 	listSnapshotsCmd.Flags().StringSlice("search-dirs", nil, "Override snapshot search directories")
 
@@ -321,18 +323,66 @@ func runListSnapshots(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// Detect boot sets and compute staleness (default on, unless --no-staleness)
+	noStaleness, _ := cmd.Flags().GetBool("no-staleness")
+	var bootSets []*kernel.BootSet
+	if !noStaleness {
+		bootSets = detectBootSets()
+	}
+
+	if len(bootSets) > 0 {
+		// Compute staleness for each snapshot against each boot set
+		staleAction := kernel.ParseStaleAction(viper.GetString("kernel.stale_snapshot_action"))
+		checker := kernel.NewChecker(staleAction)
+
+		for _, info := range allSnapshots {
+			for _, bs := range bootSets {
+				result := checker.CheckSnapshot(info.Snapshot.FilesystemPath, bs)
+
+				status := "fresh"
+				reason := ""
+				if result.IsStale {
+					status = "stale"
+					reason = string(result.Reason)
+				} else if result.Method == kernel.MatchAssumedFresh {
+					status = "unknown"
+				}
+
+				info.Staleness = append(info.Staleness, SnapshotKernelStatus{
+					KernelName:      bs.KernelName,
+					KernelVersion:   bs.KernelVersion(),
+					Status:          status,
+					Method:          string(result.Method),
+					SnapshotModules: result.SnapshotModules,
+					Reason:          reason,
+				})
+			}
+		}
+	}
+
 	if jsonOutput {
 		return outputSnapshotsJSON(allSnapshots)
 	}
 
-	return outputSnapshotsTable(allSnapshots, showSize, showVolume, useLocalTime)
+	return outputSnapshotsTable(allSnapshots, showSize, showVolume, useLocalTime, bootSets)
 }
 
 // SnapshotInfo holds snapshot with filesystem context
 type SnapshotInfo struct {
-	Snapshot   *btrfs.Snapshot   `json:"snapshot"`
-	Filesystem *btrfs.Filesystem `json:"filesystem"`
-	Size       string            `json:"size,omitempty"`
+	Snapshot   *btrfs.Snapshot        `json:"snapshot"`
+	Filesystem *btrfs.Filesystem      `json:"filesystem"`
+	Size       string                 `json:"size,omitempty"`
+	Staleness  []SnapshotKernelStatus `json:"staleness,omitempty"`
+}
+
+// SnapshotKernelStatus holds the staleness result for one snapshot+bootset pair.
+type SnapshotKernelStatus struct {
+	KernelName      string   `json:"kernel_name"`
+	KernelVersion   string   `json:"kernel_version,omitempty"`
+	Status          string   `json:"status"` // "fresh", "stale", "unknown"
+	Method          string   `json:"method,omitempty"`
+	SnapshotModules []string `json:"snapshot_modules,omitempty"`
+	Reason          string   `json:"reason,omitempty"`
 }
 
 func outputVolumesJSON(filesystems []*btrfs.Filesystem) error {
@@ -387,11 +437,31 @@ func outputSnapshotsJSON(snapshots []*SnapshotInfo) error {
 	return encoder.Encode(snapshots)
 }
 
-func outputSnapshotsTable(snapshots []*SnapshotInfo, showSize bool, showVolume bool, useLocalTime bool) error {
+func outputSnapshotsTable(snapshots []*SnapshotInfo, showSize bool, showVolume bool, useLocalTime bool, bootSets []*kernel.BootSet) error {
 	// Sort snapshots by time descending (newest first)
 	sort.Slice(snapshots, func(i, j int) bool {
 		return snapshots[i].Snapshot.SnapshotTime.After(snapshots[j].Snapshot.SnapshotTime)
 	})
+
+	hasStaleness := len(bootSets) > 0
+
+	// Print boot sets summary if available
+	if hasStaleness {
+		fmt.Printf("ESP Boot Sets (%d detected)\n", len(bootSets))
+		fmt.Println(strings.Repeat("─", 72))
+		for _, bs := range bootSets {
+			version := bs.KernelVersion()
+			if version == "" {
+				version = "(not inspected)"
+			}
+			kernelPath := "(not found)"
+			if bs.Kernel != nil {
+				kernelPath = bs.Kernel.Path
+			}
+			fmt.Printf("  %-16s %s  %s\n", bs.KernelName, version, kernelPath)
+		}
+		fmt.Println()
+	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	defer w.Flush()
@@ -405,17 +475,27 @@ func outputSnapshotsTable(snapshots []*SnapshotInfo, showSize bool, showVolume b
 	if useLocalTime {
 		timeHeader = "SNAPSHOT TIME (LOCAL)"
 	}
-	headers = append(headers, timeHeader, "SNAPSHOT PATH", "READ-ONLY", "SUBVOL ID")
-	separators = append(separators, "-------------------", "-------------", "---------", "---------")
+	headers = append(headers, timeHeader, "SNAPSHOT PATH")
+	separators = append(separators, "───────────────────", "─────────────")
+
+	// Add one staleness column per boot set
+	if hasStaleness {
+		for _, bs := range bootSets {
+			headers = append(headers, strings.ToUpper(bs.KernelName))
+			separators = append(separators, strings.Repeat("─", max(len(bs.KernelName), 7)))
+		}
+		headers = append(headers, "MODULES")
+		separators = append(separators, "───────")
+	}
 
 	if showVolume {
 		headers = append(headers, "VOLUME")
-		separators = append(separators, "------")
+		separators = append(separators, "──────")
 	}
 
 	if showSize {
 		headers = append(headers, "SIZE")
-		separators = append(separators, "----")
+		separators = append(separators, "────")
 	}
 
 	// Print headers
@@ -423,16 +503,27 @@ func outputSnapshotsTable(snapshots []*SnapshotInfo, showSize bool, showVolume b
 	fmt.Fprintln(w, strings.Join(separators, "\t"))
 
 	for _, info := range snapshots {
-		readOnly := "No"
-		if info.Snapshot.IsReadOnly {
-			readOnly = "Yes"
-		}
-
 		timeStr := btrfs.FormatSnapshotTimeForDisplay(info.Snapshot.SnapshotTime, useLocalTime)
 
 		// Build row data
 		var rowData []string
-		rowData = append(rowData, timeStr, info.Snapshot.Path, readOnly, fmt.Sprintf("%d", info.Snapshot.ID))
+		rowData = append(rowData, timeStr, info.Snapshot.Path)
+
+		// Add staleness columns
+		if hasStaleness {
+			modules := ""
+			for _, sk := range info.Staleness {
+				rowData = append(rowData, sk.Status)
+				if modules == "" && len(sk.SnapshotModules) > 0 {
+					modules = strings.Join(sk.SnapshotModules, ",")
+				}
+			}
+			// Pad if fewer staleness results than boot sets (shouldn't happen, but be safe)
+			for len(rowData) < 2+len(bootSets) {
+				rowData = append(rowData, "-")
+			}
+			rowData = append(rowData, modules)
+		}
 
 		if showVolume {
 			volumeId := info.Filesystem.GetBestIdentifier()

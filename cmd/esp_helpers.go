@@ -116,3 +116,27 @@ func scanBootImages(espPath string, scanner *kernel.Scanner) []*kernel.BootImage
 	}
 	return allImages
 }
+
+// detectBootSets is a convenience that detects the ESP, scans for boot images,
+// inspects kernels, and returns assembled boot sets. Returns nil on any error
+// (ESP not found, no images, etc.) so callers can gracefully degrade.
+func detectBootSets() []*kernel.BootSet {
+	espPath, err := detectESPPath()
+	if err != nil {
+		log.Debug().Err(err).Msg("Could not detect ESP for boot set discovery")
+		return nil
+	}
+
+	scanner := buildKernelScanner(espPath)
+	allImages := scanBootImages(espPath, scanner)
+	if len(allImages) == 0 {
+		log.Debug().Msg("No boot images found on ESP")
+		return nil
+	}
+
+	scanner.InspectAll(allImages)
+	bootSets := scanner.BuildBootSets(allImages)
+
+	log.Info().Int("boot_sets", len(bootSets)).Str("esp", espPath).Msg("Detected boot configurations on ESP")
+	return bootSets
+}
