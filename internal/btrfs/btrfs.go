@@ -4,12 +4,13 @@ import (
 	"bufio"
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -156,8 +157,8 @@ func (m *Manager) FindSnapshots(fs *Filesystem) ([]*Snapshot, error) {
 	}
 
 	// Sort snapshots by creation time (newest first)
-	sort.Slice(allSnapshots, func(i, j int) bool {
-		return allSnapshots[i].SnapshotTime.After(allSnapshots[j].SnapshotTime)
+	slices.SortFunc(allSnapshots, func(a, b *Snapshot) int {
+		return b.SnapshotTime.Compare(a.SnapshotTime)
 	})
 
 	log.Debug().Int("count", len(allSnapshots)).Str("filesystem", fs.GetBestIdentifier()).Str("id_type", fs.GetIdentifierType()).Msg("Found snapshots")
@@ -224,14 +225,7 @@ func (m *Manager) CreateWritableSnapshot(snapshot *Snapshot, destDir string, r r
 		return nil, fmt.Errorf("failed to create destination directory: %w", err)
 	}
 
-	// Check if destination already exists (only for real runs)
-	if !r.IsDryRun() {
-		if _, err := os.Stat(destPath); err == nil {
-			return nil, fmt.Errorf("destination path already exists: %s", destPath)
-		}
-	}
-
-	// Create btrfs snapshot
+	// Create btrfs snapshot (btrfs will fail atomically if destPath exists)
 	err := r.Command("btrfs", []string{"subvolume", "snapshot", snapshot.Path, destPath},
 		fmt.Sprintf("Create writable snapshot: %s -> %s", snapshot.Path, destPath))
 	if err != nil {
@@ -278,16 +272,6 @@ func (m *Manager) GetRootFilesystem() (*Filesystem, error) {
 	}
 
 	return nil, fmt.Errorf("no btrfs filesystem mounted at root")
-}
-
-// IsSnapshotBoot checks if the current boot is from a snapshot
-func (m *Manager) IsSnapshotBoot() (bool, error) {
-	rootFS, err := m.GetRootFilesystem()
-	if err != nil {
-		return false, err
-	}
-
-	return m.IsSnapshotBootFromRootFS(rootFS), nil
 }
 
 // IsSnapshotBootFromRootFS checks if we're booted from a snapshot using an existing root filesystem
@@ -402,43 +386,30 @@ func (m *Manager) findIdentifierInDir(byDir, targetDevice string) string {
 	return ""
 }
 
-// GetBestIdentifier returns the best available identifier for the filesystem (UUID > PartUUID > Label > PartLabel > Device)
-func (f *Filesystem) GetBestIdentifier() string {
-	identifiers := esp.DeviceIdentifiers{
+// deviceIdentifiers returns the DeviceIdentifiers for this filesystem.
+func (f *Filesystem) deviceIdentifiers() *esp.DeviceIdentifiers {
+	return &esp.DeviceIdentifiers{
 		UUID:      f.UUID,
 		PartUUID:  f.PartUUID,
 		Label:     f.Label,
 		PartLabel: f.PartLabel,
 		Device:    f.Device,
 	}
+}
 
-	return identifiers.GetBestIdentifier()
+// GetBestIdentifier returns the best available identifier for the filesystem (UUID > PartUUID > Label > PartLabel > Device)
+func (f *Filesystem) GetBestIdentifier() string {
+	return f.deviceIdentifiers().GetBestIdentifier()
 }
 
 // GetIdentifierType returns the type of the best available identifier
 func (f *Filesystem) GetIdentifierType() string {
-	identifiers := esp.DeviceIdentifiers{
-		UUID:      f.UUID,
-		PartUUID:  f.PartUUID,
-		Label:     f.Label,
-		PartLabel: f.PartLabel,
-		Device:    f.Device,
-	}
-
-	return identifiers.GetIdentifierType()
+	return f.deviceIdentifiers().GetIdentifierType()
 }
 
 // MatchesDevice checks if a device specification matches this filesystem using any available identifier
 func (f *Filesystem) MatchesDevice(device string) bool {
-	identifiers := esp.DeviceIdentifiers{
-		UUID:      f.UUID,
-		PartUUID:  f.PartUUID,
-		Label:     f.Label,
-		PartLabel: f.PartLabel,
-		Device:    f.Device,
-	}
-
-	return identifiers.Matches(device)
+	return f.deviceIdentifiers().Matches(device)
 }
 
 // getRootSubvolume gets information about the root subvolume of a filesystem
@@ -540,7 +511,7 @@ func (m *Manager) findSnapshotsInDir(dir string, fs *Filesystem, depth int) ([]*
 	var snapshots []*Snapshot
 
 	// Check if directory exists
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
+	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
 		return snapshots, nil
 	}
 
@@ -754,31 +725,6 @@ func GetSnapshotFstabPath(snapshot *Snapshot) string {
 	return filepath.Join(snapshot.FilesystemPath, "etc", "fstab")
 }
 
-// GetSnapshotSize calculates the size of a snapshot using the most efficient method available
-func GetSnapshotSize(path string) (string, error) {
-	return GetSnapshotSizeWithProgress(path, 0, 0)
-}
-
-// GetSnapshotSizeWithProgress calculates the size of a snapshot with progress indication
-func GetSnapshotSizeWithProgress(path string, current, total int) (string, error) {
-	if path == "" {
-		return "", fmt.Errorf("path cannot be empty")
-	}
-
-	// Check if path exists
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return "", fmt.Errorf("path does not exist: %s", path)
-	}
-
-	// Try qgroups first (fast) - only if quotas are already enabled
-	if size, err := getSnapshotSizeFromQgroups(path); err == nil {
-		return size, nil
-	}
-
-	// Fallback to native Go calculation with progress (slow but accurate)
-	return getSnapshotSizeNativeWithProgress(path, current, total)
-}
-
 // GetSnapshotSizeWithoutProgress calculates the size of a snapshot using external file counter
 func GetSnapshotSizeWithoutProgress(path string, fileCount *int64) (string, error) {
 	if path == "" {
@@ -786,7 +732,7 @@ func GetSnapshotSizeWithoutProgress(path string, fileCount *int64) (string, erro
 	}
 
 	// Check if path exists
-	if _, err := os.Stat(path); os.IsNotExist(err) {
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("path does not exist: %s", path)
 	}
 
@@ -1031,7 +977,7 @@ func (m *Manager) CleanupOldSnapshots(destDir string, keepCount int, r runner.Ru
 
 	entries, err := os.ReadDir(destDir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return nil // Directory doesn't exist, nothing to clean
 		}
 		return fmt.Errorf("failed to read destination directory: %w", err)
@@ -1045,7 +991,7 @@ func (m *Manager) CleanupOldSnapshots(destDir string, keepCount int, r runner.Ru
 	}
 
 	// Sort snapshots by name (which includes timestamp)
-	sort.Strings(snapshots)
+	slices.Sort(snapshots)
 
 	// Remove old snapshots if we have more than keepCount
 	if len(snapshots) > keepCount {
@@ -1124,7 +1070,7 @@ func FormatSnapshotTimeForDisplay(t time.Time, useLocalTime bool) string {
 //
 // Custom template placeholders:
 // - YYYY: 4-digit year (2006)
-// - YY: 2-digit year (06) 
+// - YY: 2-digit year (06)
 // - MM: 2-digit month (01)
 // - DD: 2-digit day (02)
 // - HH: 2-digit hour (15)
@@ -1138,13 +1084,13 @@ func FormatSnapshotTimeForMenu(t time.Time, template string, useLocalTime bool) 
 	} else {
 		timeToUse = t.UTC()
 	}
-	
+
 	// Check if template contains custom placeholders
-	if strings.Contains(template, "YYYY") || strings.Contains(template, "YY") || 
-	   strings.Contains(template, "MM") || strings.Contains(template, "DD") || 
-	   strings.Contains(template, "HH") || strings.Contains(template, "mm") || 
-	   strings.Contains(template, "ss") {
-		
+	if strings.Contains(template, "YYYY") || strings.Contains(template, "YY") ||
+		strings.Contains(template, "MM") || strings.Contains(template, "DD") ||
+		strings.Contains(template, "HH") || strings.Contains(template, "mm") ||
+		strings.Contains(template, "ss") {
+
 		// Apply custom template substitutions
 		result := template
 		result = strings.ReplaceAll(result, "YYYY", timeToUse.Format("2006"))
@@ -1156,7 +1102,7 @@ func FormatSnapshotTimeForMenu(t time.Time, template string, useLocalTime bool) 
 		result = strings.ReplaceAll(result, "ss", timeToUse.Format("05"))
 		return result
 	}
-	
+
 	// Fall back to Go time format
 	return timeToUse.Format(template)
 }
@@ -1166,7 +1112,7 @@ func FormatSnapshotTimeForMenu(t time.Time, template string, useLocalTime bool) 
 // Automatically replaces problematic characters with safe alternatives
 func FormatSnapshotTimeForRwsnap(t time.Time, template string, useLocalTime bool) string {
 	result := FormatSnapshotTimeForMenu(t, template, useLocalTime)
-	
+
 	// Replace filesystem-unsafe characters with safe alternatives
 	result = strings.ReplaceAll(result, "/", "-")
 	result = strings.ReplaceAll(result, "\\", "-")
@@ -1177,7 +1123,7 @@ func FormatSnapshotTimeForRwsnap(t time.Time, template string, useLocalTime bool
 	result = strings.ReplaceAll(result, "?", "-")
 	result = strings.ReplaceAll(result, "*", "-")
 	result = strings.ReplaceAll(result, " ", "_")
-	
+
 	return result
 }
 

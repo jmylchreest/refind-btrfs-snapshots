@@ -108,12 +108,12 @@ func (p *Parser) FindRefindLinuxConfigs() ([]string, error) {
 	var configs []string
 
 	// Walk the entire ESP to find all refind_linux.conf files
-	err := filepath.Walk(p.espPath, func(path string, info os.FileInfo, err error) error {
+	err := filepath.WalkDir(p.espPath, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil // Continue on errors
 		}
 
-		if info.Name() == "refind_linux.conf" {
+		if d.Name() == "refind_linux.conf" {
 			configs = append(configs, path)
 			log.Debug().Str("path", path).Msg("Found refind_linux.conf")
 		}
@@ -413,16 +413,6 @@ func NewGenerator(espPath string) *Generator {
 	}
 }
 
-// NewGeneratorWithBootSets creates a new rEFInd config generator with detected boot sets.
-// Boot sets are used for generating accurate template entries with real kernel/initramfs paths.
-func NewGeneratorWithBootSets(espPath string, scanner *kernel.Scanner, bootSets []*kernel.BootSet) *Generator {
-	return &Generator{
-		parser:   NewParserWithScanner(espPath, scanner),
-		espPath:  espPath,
-		bootSets: bootSets,
-	}
-}
-
 // NewGeneratorWithBootPlans creates a new rEFInd config generator with detected boot sets
 // and per-snapshot boot plans. Boot plans enable btrfs-mode submenu generation where
 // kernels are loaded from inside the snapshot rather than the ESP.
@@ -547,45 +537,6 @@ func (g *Generator) UpdateRefindLinuxConfWithAllEntries(snapshots []*btrfs.Snaps
 	}, nil
 }
 
-// UpdateRefindLinuxConfDiff generates a diff for updating refind_linux.conf with snapshot entries
-func (g *Generator) UpdateRefindLinuxConfDiff(snapshots []*btrfs.Snapshot, sourceEntry *MenuEntry, rootFS *btrfs.Filesystem) (*diff.FileDiff, error) {
-	if len(snapshots) == 0 {
-		return nil, nil
-	}
-
-	// Find the source refind_linux.conf file
-	if sourceEntry.SourceFile == "" || !strings.HasSuffix(sourceEntry.SourceFile, "refind_linux.conf") {
-		return nil, fmt.Errorf("source entry is not from refind_linux.conf")
-	}
-
-	linuxConfPath := sourceEntry.SourceFile
-
-	// Read original file content
-	originalContent, err := os.ReadFile(linuxConfPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read refind_linux.conf: %w", err)
-	}
-
-	// Generate new content with snapshot entries
-	newContent, err := g.generateRefindLinuxConfContent(string(originalContent), snapshots, sourceEntry, rootFS)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate refind_linux.conf content: %w", err)
-	}
-
-	// Only return diff if content actually changed
-	if newContent == string(originalContent) {
-		log.Debug().Str("path", linuxConfPath).Msg("File content matches, no changes required")
-		return nil, nil
-	}
-
-	return &diff.FileDiff{
-		Path:     linuxConfPath,
-		Original: string(originalContent),
-		Modified: newContent,
-		IsNew:    false,
-	}, nil
-}
-
 // generateRefindLinuxConfWithAllEntries processes all entries and generates content with cleanup
 func (g *Generator) generateRefindLinuxConfWithAllEntries(originalContent string, snapshots []*btrfs.Snapshot, sourceEntries []*MenuEntry, rootFS *btrfs.Filesystem) (string, error) {
 	var lines []string
@@ -672,91 +623,6 @@ func (g *Generator) generateRefindLinuxConfWithAllEntries(originalContent string
 				snapshotLine := fmt.Sprintf("\"%s\" \"%s\"", snapshotTitle, snapshotOptions)
 				lines = append(lines, snapshotLine)
 			}
-		}
-
-		lines = append(lines, "##refind-btrfs-snapshots-end")
-	}
-
-	return strings.Join(lines, "\n"), nil
-}
-
-// generateRefindLinuxConfContent adds snapshot entries to a refind_linux.conf file
-func (g *Generator) generateRefindLinuxConfContent(originalContent string, snapshots []*btrfs.Snapshot, sourceEntry *MenuEntry, rootFS *btrfs.Filesystem) (string, error) {
-	var lines []string
-	var sourceLineFound bool
-
-	// Parse existing content and remove old generated sections
-	scanner := bufio.NewScanner(strings.NewReader(originalContent))
-	var inGeneratedSection bool
-	var foundMarkers bool
-
-	// First pass: check if we have any markers
-	markerScanner := bufio.NewScanner(strings.NewReader(originalContent))
-	for markerScanner.Scan() {
-		line := markerScanner.Text()
-		if strings.Contains(line, "##refind-btrfs-snapshots-start") || strings.Contains(line, "##refind-btrfs-snapshots-end") {
-			foundMarkers = true
-			break
-		}
-	}
-
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		if foundMarkers {
-			// Use marker-based cleanup
-			if strings.Contains(line, "##refind-btrfs-snapshots-start") {
-				inGeneratedSection = true
-				continue // Skip the start marker line
-			}
-			if strings.Contains(line, "##refind-btrfs-snapshots-end") {
-				inGeneratedSection = false
-				continue // Skip the end marker line
-			}
-
-			// Skip lines within generated sections
-			if inGeneratedSection {
-				continue
-			}
-		} else {
-			// Fallback to pattern-based cleanup for backward compatibility
-			if !strings.HasPrefix(strings.TrimSpace(line), "#") && strings.TrimSpace(line) != "" {
-				if g.isLegacyGeneratedSnapshotEntry(line) {
-					continue // Skip legacy generated entries
-				}
-			}
-		}
-
-		lines = append(lines, line)
-
-		// Check if this is the source entry line we're extending
-		if !sourceLineFound && strings.TrimSpace(line) != "" && !strings.HasPrefix(strings.TrimSpace(line), "#") {
-			// Parse this line to see if it matches our source entry
-			parts := g.parser.parseQuotedLine(strings.TrimSpace(line))
-			if len(parts) >= 2 && parts[0] == sourceEntry.Title && parts[1] == sourceEntry.Options {
-				sourceLineFound = true
-			}
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return "", err
-	}
-
-	// If we found the source line, add snapshot entries after it
-	if sourceLineFound {
-		// Add snapshot entries wrapped with markers
-		lines = append(lines, "")
-		lines = append(lines, "##refind-btrfs-snapshots-start")
-
-		// Add snapshot entries
-		for _, snapshot := range snapshots {
-			snapshotTitle := fmt.Sprintf("%s (%s)", sourceEntry.Title, g.getSnapshotDisplayName(snapshot))
-			snapshotOptions := g.updateOptionsForSnapshot(sourceEntry.Options, snapshot)
-
-			// Format as quoted line: "Title" "options"
-			snapshotLine := fmt.Sprintf("\"%s\" \"%s\"", snapshotTitle, snapshotOptions)
-			lines = append(lines, snapshotLine)
 		}
 
 		lines = append(lines, "##refind-btrfs-snapshots-end")

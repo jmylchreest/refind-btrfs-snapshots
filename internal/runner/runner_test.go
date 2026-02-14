@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -44,7 +45,7 @@ func TestDryRunner(t *testing.T) {
 	}
 
 	// Directory should not exist
-	if _, err := os.Stat(testDir); !os.IsNotExist(err) {
+	if _, err := os.Stat(testDir); !errors.Is(err, os.ErrNotExist) {
 		t.Error("DryRunner should not create actual directory")
 	}
 
@@ -58,7 +59,7 @@ func TestDryRunner(t *testing.T) {
 	}
 
 	// File should not exist
-	if _, err := os.Stat(testFile); !os.IsNotExist(err) {
+	if _, err := os.Stat(testFile); !errors.Is(err, os.ErrNotExist) {
 		t.Error("DryRunner should not create actual file")
 	}
 }

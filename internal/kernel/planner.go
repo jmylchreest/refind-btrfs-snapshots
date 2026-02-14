@@ -1,6 +1,7 @@
 package kernel
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -77,15 +78,6 @@ func (bp *BootPlan) IsStale() bool {
 	return bp.Staleness != nil && bp.Staleness.IsStale
 }
 
-// StaleAction returns the resolved staleness action for this plan.
-// Returns empty string for btrfs-mode or non-stale snapshots.
-func (bp *BootPlan) StaleAction() StaleAction {
-	if bp.Staleness != nil && bp.Staleness.IsStale {
-		return bp.Staleness.Action
-	}
-	return ""
-}
-
 // Planner creates BootPlans for snapshots by inspecting each snapshot's fstab
 // to determine whether kernels come from the ESP or from within the snapshot.
 type Planner struct {
@@ -125,18 +117,6 @@ func (p *Planner) Plan(snapshots []*btrfs.Snapshot) []*BootPlan {
 	return plans
 }
 
-// PlanBySnapshot creates a map from snapshot path to its boot plans.
-// This is a convenience wrapper around Plan for callers that need
-// per-snapshot lookup.
-func (p *Planner) PlanBySnapshot(snapshots []*btrfs.Snapshot) map[string][]*BootPlan {
-	allPlans := p.Plan(snapshots)
-	result := make(map[string][]*BootPlan)
-	for _, plan := range allPlans {
-		result[plan.Snapshot.Path] = append(result[plan.Snapshot.Path], plan)
-	}
-	return result
-}
-
 // planSnapshot determines the boot mode for a single snapshot and creates
 // the appropriate BootPlan(s).
 func (p *Planner) planSnapshot(snapshot *btrfs.Snapshot) []*BootPlan {
@@ -155,7 +135,7 @@ func (p *Planner) analyzeSnapshotBoot(snapshot *btrfs.Snapshot) *fstab.BootMount
 	fstabPath := btrfs.GetSnapshotFstabPath(snapshot)
 
 	// Check if fstab exists
-	if _, err := os.Stat(fstabPath); os.IsNotExist(err) {
+	if _, err := os.Stat(fstabPath); errors.Is(err, os.ErrNotExist) {
 		log.Debug().
 			Str("snapshot", snapshot.Path).
 			Str("fstab_path", fstabPath).
@@ -333,7 +313,7 @@ type kernelImageSet struct {
 func findKernelImages(bootDir string) []kernelImageSet {
 	entries, err := os.ReadDir(bootDir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			log.Debug().Str("dir", bootDir).Msg("Boot directory does not exist in snapshot")
 		} else {
 			log.Warn().Err(err).Str("dir", bootDir).Msg("Failed to read snapshot boot directory")
@@ -428,37 +408,11 @@ func findKernelImages(bootDir string) []kernelImageSet {
 	return result
 }
 
-// FilterSkipped returns only the plans that should be included in generation
-// (i.e., not skipped due to staleness delete action).
-func FilterSkipped(plans []*BootPlan) []*BootPlan {
-	var result []*BootPlan
-	for _, p := range plans {
-		if !p.ShouldSkip() {
-			result = append(result, p)
-		}
-	}
-	return result
-}
-
 // GroupBySnapshot groups plans by snapshot path.
 func GroupBySnapshot(plans []*BootPlan) map[string][]*BootPlan {
 	result := make(map[string][]*BootPlan)
 	for _, p := range plans {
 		result[p.Snapshot.Path] = append(result[p.Snapshot.Path], p)
-	}
-	return result
-}
-
-// SnapshotsFromPlans extracts unique snapshots from a list of plans,
-// preserving order of first appearance.
-func SnapshotsFromPlans(plans []*BootPlan) []*btrfs.Snapshot {
-	seen := make(map[string]bool)
-	var result []*btrfs.Snapshot
-	for _, p := range plans {
-		if !seen[p.Snapshot.Path] {
-			seen[p.Snapshot.Path] = true
-			result = append(result, p.Snapshot)
-		}
 	}
 	return result
 }

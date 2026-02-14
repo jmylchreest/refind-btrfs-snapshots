@@ -1,9 +1,10 @@
 package kernel
 
 import (
+	"cmp"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/rs/zerolog/log"
@@ -91,8 +92,8 @@ func (s *Scanner) ScanDir(dir string) ([]*BootImage, error) {
 	}
 
 	// Sort for deterministic output: kernels first, then initramfs, fallback, microcode
-	sort.Slice(images, func(i, j int) bool {
-		return roleOrder[images[i].Role] < roleOrder[images[j].Role]
+	slices.SortFunc(images, func(a, b *BootImage) int {
+		return cmp.Compare(roleOrder[a.Role], roleOrder[b.Role])
 	})
 
 	// Log summary
@@ -235,7 +236,7 @@ func (s *Scanner) BuildBootSets(images []*BootImage) []*BootSet {
 	for name := range setMap {
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 
 	for _, name := range names {
 		bs := setMap[name]

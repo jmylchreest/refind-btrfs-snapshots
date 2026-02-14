@@ -171,15 +171,6 @@ func TestPatchDiff(t *testing.T) {
 	}
 }
 
-func TestGenerateFileContent(t *testing.T) {
-	content := "test content"
-	result := GenerateFileContent(content)
-
-	if result != content {
-		t.Errorf("GenerateFileContent() = %v, want %v", result, content)
-	}
-}
-
 func TestConfirmChanges(t *testing.T) {
 	fileDiff := &FileDiff{
 		Path:     "/test/file.txt",

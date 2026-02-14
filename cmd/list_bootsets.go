@@ -19,7 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -150,8 +150,8 @@ func runListBootsets(cmd *cobra.Command, args []string) error {
 	}
 
 	// Sort snapshots newest first
-	sort.Slice(snapshots, func(i, j int) bool {
-		return snapshots[i].SnapshotTime.After(snapshots[j].SnapshotTime)
+	slices.SortFunc(snapshots, func(a, b *btrfs.Snapshot) int {
+		return b.SnapshotTime.Compare(a.SnapshotTime)
 	})
 
 	// Apply selection count if configured
@@ -162,8 +162,7 @@ func runListBootsets(cmd *cobra.Command, args []string) error {
 	// Build planner for per-snapshot boot mode detection
 	var rootFS *btrfs.Filesystem
 	if len(filesystems) > 0 {
-		rootBtrfsManager := btrfs.NewManager(searchDirs, maxDepth)
-		rootFS, _ = rootBtrfsManager.GetRootFilesystem()
+		rootFS, _ = btrfsManager.GetRootFilesystem()
 	}
 
 	fstabMgr := fstab.NewManager()
@@ -298,19 +297,11 @@ func outputBootsetsJSON(bootSets []*kernel.BootSet, allImages []*kernel.BootImag
 				})
 				continue
 			}
-			status := "fresh"
-			reason := ""
-			if result.IsStale {
-				status = "stale"
-				reason = string(result.Reason)
-			} else if result.Method == kernel.MatchAssumedFresh {
-				status = "unknown"
-			}
 			entry := compatEntryJSON{
 				KernelName: bootSets[i].KernelName,
-				Status:     status,
+				Status:     result.StatusString(),
 				Method:     string(result.Method),
-				Reason:     reason,
+				Reason:     string(result.Reason),
 			}
 			if result.IsStale {
 				entry.Action = string(result.Action)
@@ -428,12 +419,8 @@ func outputBootsetsTable(bootSets []*kernel.BootSet, allImages []*kernel.BootIma
 			for _, result := range row.Results {
 				if row.BootMode == kernel.BootModeBtrfs {
 					cols = append(cols, "n/a")
-				} else if result.IsStale {
-					cols = append(cols, "stale")
-				} else if result.Method == kernel.MatchAssumedFresh {
-					cols = append(cols, "unknown")
 				} else {
-					cols = append(cols, "fresh")
+					cols = append(cols, result.StatusString())
 				}
 			}
 

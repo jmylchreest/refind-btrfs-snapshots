@@ -3,6 +3,7 @@ package runner
 import (
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/rs/zerolog/log"
 )
@@ -92,12 +93,5 @@ func New(dryRun bool) Runner {
 }
 
 func joinArgs(args []string) string {
-	result := ""
-	for i, arg := range args {
-		if i > 0 {
-			result += " "
-		}
-		result += arg
-	}
-	return result
+	return strings.Join(args, " ")
 }

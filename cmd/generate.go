@@ -59,13 +59,13 @@ func init() {
 	generateCmd.Flags().BoolP("yes", "y", false, "Automatically approve all changes without prompting")
 
 	// Bind flags to viper
-	viper.BindPFlag("refind.config_path", generateCmd.Flags().Lookup("config-path"))
-	viper.BindPFlag("esp.mount_point", generateCmd.Flags().Lookup("esp-path"))
-	viper.BindPFlag("snapshot.selection_count", generateCmd.Flags().Lookup("count"))
-	viper.BindPFlag("dry_run", generateCmd.Flags().Lookup("dry-run"))
-	viper.BindPFlag("force", generateCmd.Flags().Lookup("force"))
-	viper.BindPFlag("generate_include", generateCmd.Flags().Lookup("generate-include"))
-	viper.BindPFlag("yes", generateCmd.Flags().Lookup("yes"))
+	_ = viper.BindPFlag("refind.config_path", generateCmd.Flags().Lookup("config-path"))
+	_ = viper.BindPFlag("esp.mount_point", generateCmd.Flags().Lookup("esp-path"))
+	_ = viper.BindPFlag("snapshot.selection_count", generateCmd.Flags().Lookup("count"))
+	_ = viper.BindPFlag("dry_run", generateCmd.Flags().Lookup("dry-run"))
+	_ = viper.BindPFlag("force", generateCmd.Flags().Lookup("force"))
+	_ = viper.BindPFlag("generate_include", generateCmd.Flags().Lookup("generate-include"))
+	_ = viper.BindPFlag("yes", generateCmd.Flags().Lookup("yes"))
 }
 
 func runGenerate(cmd *cobra.Command, args []string) error {

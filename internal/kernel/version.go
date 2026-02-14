@@ -1,6 +1,7 @@
 package kernel
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,7 +20,7 @@ func GetSnapshotModuleVersions(snapshotFSPath string) []string {
 
 	entries, err := os.ReadDir(modulesDir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			log.Debug().
 				Str("path", modulesDir).
 				Msg("No /lib/modules directory in snapshot")
@@ -69,7 +70,7 @@ func ReadPkgbase(snapshotFSPath string, moduleVersion string) string {
 
 	data, err := os.ReadFile(pkgbasePath)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			log.Trace().
 				Str("path", pkgbasePath).
 				Msg("No pkgbase file (non-Arch system or missing file)")

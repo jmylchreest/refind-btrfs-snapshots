@@ -1,10 +1,11 @@
 package cmd
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -77,10 +78,10 @@ func init() {
 	listSnapshotsCmd.Flags().StringSlice("search-dirs", nil, "Override snapshot search directories")
 
 	// Bind flags to viper for backward compatibility
-	viper.BindPFlag("list.show_all", listCmd.Flags().Lookup("all"))
-	viper.BindPFlag("list.format", listCmd.Flags().Lookup("format"))
-	viper.BindPFlag("list.show_size", listCmd.Flags().Lookup("show-size"))
-	viper.BindPFlag("list.search_dirs", listCmd.Flags().Lookup("search-dirs"))
+	_ = viper.BindPFlag("list.show_all", listCmd.Flags().Lookup("all"))
+	_ = viper.BindPFlag("list.format", listCmd.Flags().Lookup("format"))
+	_ = viper.BindPFlag("list.show_size", listCmd.Flags().Lookup("show-size"))
+	_ = viper.BindPFlag("list.search_dirs", listCmd.Flags().Lookup("search-dirs"))
 }
 
 func runListRoot(cmd *cobra.Command, args []string) error {
@@ -121,8 +122,8 @@ func showParallelProgress(activeSnapshots *sync.Map, totalSnapshots int, done ch
 			})
 
 			// Sort by index
-			sort.Slice(active, func(i, j int) bool {
-				return active[i].Index < active[j].Index
+			slices.SortFunc(active, func(a, b *SnapshotProgress) int {
+				return cmp.Compare(a.Index, b.Index)
 			})
 
 			// Clear the entire line first
@@ -227,7 +228,6 @@ func runListSnapshots(cmd *cobra.Command, args []string) error {
 	// Find snapshots for each filesystem and deduplicate
 	var allSnapshots []*SnapshotInfo
 	seenSnapshots := make(map[string]bool) // Track by snapshot path to avoid duplicates
-	totalSnapshotsFound := 0
 	filesystemsWithSnapshots := 0
 
 	for _, fs := range filesystems {
@@ -239,7 +239,6 @@ func runListSnapshots(cmd *cobra.Command, args []string) error {
 
 		if len(snapshots) > 0 {
 			filesystemsWithSnapshots++
-			totalSnapshotsFound += len(snapshots)
 
 			log.Debug().
 				Int("count", len(snapshots)).
@@ -332,20 +331,17 @@ func runListSnapshots(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get root filesystem for boot mode detection
-	searchDirsForRoot := viper.GetStringSlice("snapshot.search_directories")
-	maxDepthForRoot := viper.GetInt("snapshot.max_depth")
-	rootBtrfsManager := btrfs.NewManager(searchDirsForRoot, maxDepthForRoot)
-	rootFS, _ := rootBtrfsManager.GetRootFilesystem()
+	rootFS, _ := btrfsManager.GetRootFilesystem()
 
-	// Build planner for per-snapshot boot mode detection
+	// Build planner and checker for per-snapshot boot mode/staleness detection
 	fstabMgr := fstab.NewManager()
 	var planner *kernel.Planner
+	var checker *kernel.Checker
+	if len(bootSets) > 0 {
+		staleAction := kernel.ParseStaleAction(viper.GetString("kernel.stale_snapshot_action"))
+		checker = kernel.NewChecker(staleAction)
+	}
 	if rootFS != nil {
-		var checker *kernel.Checker
-		if len(bootSets) > 0 {
-			staleAction := kernel.ParseStaleAction(viper.GetString("kernel.stale_snapshot_action"))
-			checker = kernel.NewChecker(staleAction)
-		}
 		planner = kernel.NewPlanner(fstabMgr, checker, bootSets, rootFS)
 	}
 
@@ -363,29 +359,18 @@ func runListSnapshots(cmd *cobra.Command, args []string) error {
 		}
 
 		// Staleness only applies to ESP-mode snapshots
-		if len(bootSets) > 0 && info.BootMode == kernel.BootModeESP {
-			staleAction := kernel.ParseStaleAction(viper.GetString("kernel.stale_snapshot_action"))
-			checker := kernel.NewChecker(staleAction)
+		if checker != nil && info.BootMode == kernel.BootModeESP {
 
 			for _, bs := range bootSets {
 				result := checker.CheckSnapshot(info.Snapshot.FilesystemPath, bs)
 
-				status := "fresh"
-				reason := ""
-				if result.IsStale {
-					status = "stale"
-					reason = string(result.Reason)
-				} else if result.Method == kernel.MatchAssumedFresh {
-					status = "unknown"
-				}
-
 				info.Staleness = append(info.Staleness, SnapshotKernelStatus{
 					KernelName:      bs.KernelName,
 					KernelVersion:   bs.KernelVersion(),
-					Status:          status,
+					Status:          result.StatusString(),
 					Method:          string(result.Method),
 					SnapshotModules: result.SnapshotModules,
-					Reason:          reason,
+					Reason:          string(result.Reason),
 				})
 			}
 		} else if len(bootSets) > 0 && info.BootMode == kernel.BootModeBtrfs {
@@ -481,8 +466,8 @@ func outputSnapshotsJSON(snapshots []*SnapshotInfo) error {
 
 func outputSnapshotsTable(snapshots []*SnapshotInfo, showSize bool, showVolume bool, useLocalTime bool, bootSets []*kernel.BootSet) error {
 	// Sort snapshots by time descending (newest first)
-	sort.Slice(snapshots, func(i, j int) bool {
-		return snapshots[i].Snapshot.SnapshotTime.After(snapshots[j].Snapshot.SnapshotTime)
+	slices.SortFunc(snapshots, func(a, b *SnapshotInfo) int {
+		return b.Snapshot.SnapshotTime.Compare(a.Snapshot.SnapshotTime)
 	})
 
 	hasStaleness := len(bootSets) > 0

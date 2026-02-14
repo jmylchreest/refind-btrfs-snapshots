@@ -104,13 +104,6 @@ func (fd *FileDiff) generateUnifiedDiff() string {
 	return result.String()
 }
 
-// DiffLine represents a line in a diff
-type DiffLine struct {
-	Type    string // " ", "-", "+"
-	Content string
-	LineNum int
-}
-
 // generateSimpleDiff generates a simple line-by-line diff
 func generateSimpleDiff(original, modified []string) []string {
 	var result []string
@@ -276,11 +269,11 @@ func showWithPager(content string) {
 
 	// Write colorized content to pager
 	colorizedContent := colorizeContent(content)
-	stdin.Write([]byte(colorizedContent))
-	stdin.Close()
+	_, _ = stdin.Write([]byte(colorizedContent))
+	_ = stdin.Close()
 
 	// Wait for pager to finish
-	cmd.Wait()
+	_ = cmd.Wait()
 }
 
 // showDirect displays content directly to stdout
@@ -310,11 +303,6 @@ func colorizeContent(content string) string {
 	}
 
 	return result.String()
-}
-
-// GenerateFileContent creates content that would be written to a file
-func GenerateFileContent(content string) string {
-	return content
 }
 
 // ConfirmChanges shows a diff and asks the user for confirmation

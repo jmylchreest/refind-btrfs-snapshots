@@ -66,8 +66,8 @@ func init() {
 	rootCmd.PersistentFlags().Bool("local-time", false, "Display times in local time instead of UTC")
 
 	// Bind flags to viper
-	viper.BindPFlag("log_level", rootCmd.PersistentFlags().Lookup("log-level"))
-	viper.BindPFlag("display.local_time", rootCmd.PersistentFlags().Lookup("local-time"))
+	_ = viper.BindPFlag("log_level", rootCmd.PersistentFlags().Lookup("log-level"))
+	_ = viper.BindPFlag("display.local_time", rootCmd.PersistentFlags().Lookup("local-time"))
 }
 
 // initConfig reads in config file and ENV variables if set.
@@ -139,25 +139,11 @@ func initLogging() {
 
 	// Set log level
 	level := viper.GetString("log_level")
-
-	switch level {
-	case "trace":
-		zerolog.SetGlobalLevel(zerolog.TraceLevel)
-	case "debug":
-		zerolog.SetGlobalLevel(zerolog.DebugLevel)
-	case "info":
-		zerolog.SetGlobalLevel(zerolog.InfoLevel)
-	case "warn":
-		zerolog.SetGlobalLevel(zerolog.WarnLevel)
-	case "error":
-		zerolog.SetGlobalLevel(zerolog.ErrorLevel)
-	case "fatal":
-		zerolog.SetGlobalLevel(zerolog.FatalLevel)
-	case "panic":
-		zerolog.SetGlobalLevel(zerolog.PanicLevel)
-	default:
-		zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	parsed, err := zerolog.ParseLevel(level)
+	if err != nil || parsed == zerolog.NoLevel {
+		parsed = zerolog.InfoLevel
 	}
+	zerolog.SetGlobalLevel(parsed)
 
 	log.Debug().
 		Str("version", getVersion()).

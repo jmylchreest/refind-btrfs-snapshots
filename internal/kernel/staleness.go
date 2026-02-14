@@ -98,6 +98,17 @@ type StalenessResult struct {
 	Warning string
 }
 
+// StatusString returns a human-readable status label: "stale", "fresh", or "unknown".
+func (r *StalenessResult) StatusString() string {
+	if r.IsStale {
+		return "stale"
+	}
+	if r.Method == MatchAssumedFresh {
+		return "unknown"
+	}
+	return "fresh"
+}
+
 // Checker performs staleness checks for snapshots against boot sets.
 type Checker struct {
 	defaultAction StaleAction

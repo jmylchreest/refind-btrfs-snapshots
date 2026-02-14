@@ -403,52 +403,6 @@ UUID=AAAA-BBBB /boot vfat defaults 0 2
 
 // --- Helper function tests ---
 
-func TestFilterSkipped(t *testing.T) {
-	plans := []*BootPlan{
-		{
-			Snapshot: testSnapshot("a", "/a"),
-			Mode:     BootModeBtrfs,
-		},
-		{
-			Snapshot:  testSnapshot("b", "/b"),
-			Mode:      BootModeESP,
-			Staleness: &StalenessResult{IsStale: true, Action: ActionDelete},
-		},
-		{
-			Snapshot:  testSnapshot("c", "/c"),
-			Mode:      BootModeESP,
-			Staleness: &StalenessResult{IsStale: true, Action: ActionWarn},
-		},
-		{
-			Snapshot:  testSnapshot("d", "/d"),
-			Mode:      BootModeESP,
-			Staleness: &StalenessResult{IsStale: false},
-		},
-	}
-
-	filtered := FilterSkipped(plans)
-	assert.Len(t, filtered, 3) // b is skipped (delete)
-	assert.Equal(t, "a", filtered[0].Snapshot.Path)
-	assert.Equal(t, "c", filtered[1].Snapshot.Path)
-	assert.Equal(t, "d", filtered[2].Snapshot.Path)
-}
-
-func TestSnapshotsFromPlans(t *testing.T) {
-	snap1 := testSnapshot("path1", "/fs1")
-	snap2 := testSnapshot("path2", "/fs2")
-
-	plans := []*BootPlan{
-		{Snapshot: snap1, Mode: BootModeESP, BootSet: testBootSet("linux", "6.19.0")},
-		{Snapshot: snap1, Mode: BootModeESP, BootSet: testBootSet("linux-lts", "6.6.78")},
-		{Snapshot: snap2, Mode: BootModeBtrfs},
-	}
-
-	snapshots := SnapshotsFromPlans(plans)
-	assert.Len(t, snapshots, 2)
-	assert.Equal(t, snap1, snapshots[0])
-	assert.Equal(t, snap2, snapshots[1])
-}
-
 func TestBootPlan_FormatStaleSummary(t *testing.T) {
 	btrfsPlan := &BootPlan{
 		Snapshot: testSnapshot("@/.snapshots/73/snapshot", "/tmp"),
@@ -554,7 +508,7 @@ UUID=AAAA-BBBB /boot vfat defaults 0 2
 	}
 	for i := 3; i < 5; i++ {
 		assert.True(t, plans[i].IsStale(), "snapshot %d should be stale", i)
-		assert.Equal(t, ActionWarn, plans[i].StaleAction())
+		assert.Equal(t, ActionWarn, plans[i].Staleness.Action)
 	}
 }
 
@@ -592,7 +546,7 @@ UUID=AAAA-BBBB /boot vfat defaults 0 2
 			require.Len(t, plans, 1)
 			assert.True(t, plans[0].IsStale())
 			assert.Equal(t, tt.wantSkip, plans[0].ShouldSkip())
-			assert.Equal(t, tt.wantAction, plans[0].StaleAction())
+			assert.Equal(t, tt.wantAction, plans[0].Staleness.Action)
 		})
 	}
 }
@@ -624,7 +578,7 @@ UUID=AAAA-BBBB /boot vfat defaults 0 2
 
 	require.Len(t, plans, 1)
 	assert.True(t, plans[0].IsStale())
-	assert.Equal(t, ActionFallback, plans[0].StaleAction())
+	assert.Equal(t, ActionFallback, plans[0].Staleness.Action)
 	assert.True(t, plans[0].Staleness.FallbackUsed)
 	assert.False(t, plans[0].ShouldSkip(), "fallback action must not skip the entry")
 }
@@ -653,7 +607,7 @@ UUID=AAAA-BBBB /boot vfat defaults 0 2
 	require.Len(t, plans, 1)
 	assert.True(t, plans[0].IsStale())
 	// Key assertion: downgrades from fallback to disable
-	assert.Equal(t, ActionDisable, plans[0].StaleAction(),
+	assert.Equal(t, ActionDisable, plans[0].Staleness.Action,
 		"must downgrade to 'disable' when fallback image is missing")
 	assert.False(t, plans[0].Staleness.FallbackUsed,
 		"FallbackUsed must be false when no fallback image exists")
@@ -694,7 +648,7 @@ UUID=AAAA-BBBB /boot vfat defaults 0 2
 	// Old snapshot: ESP mode, stale (old modules)
 	assert.Equal(t, BootModeESP, plans[0].Mode)
 	assert.True(t, plans[0].IsStale())
-	assert.Equal(t, ActionWarn, plans[0].StaleAction())
+	assert.Equal(t, ActionWarn, plans[0].Staleness.Action)
 
 	// New snapshot: btrfs mode, never stale
 	assert.Equal(t, BootModeBtrfs, plans[1].Mode)
@@ -796,44 +750,6 @@ UUID=AAAA-BBBB /boot vfat defaults 0 2
 	assert.Nil(t, plans[0].Staleness)
 	assert.False(t, plans[0].IsStale())
 	assert.False(t, plans[0].ShouldSkip())
-}
-
-// TestPlanner_FilterSkipped_OnlyDeletesRemoved verifies that FilterSkipped
-// only removes delete-action plans, not warn/disable/fallback.
-func TestPlanner_FilterSkipped_OnlyDeletesRemoved(t *testing.T) {
-	plans := []*BootPlan{
-		// btrfs mode — always kept
-		{Snapshot: testSnapshot("btrfs-snap", "/a"), Mode: BootModeBtrfs},
-		// ESP fresh — kept
-		{Snapshot: testSnapshot("fresh", "/b"), Mode: BootModeESP,
-			Staleness: &StalenessResult{IsStale: false}},
-		// ESP stale warn — kept
-		{Snapshot: testSnapshot("warn", "/c"), Mode: BootModeESP,
-			Staleness: &StalenessResult{IsStale: true, Action: ActionWarn}},
-		// ESP stale disable — kept
-		{Snapshot: testSnapshot("disable", "/d"), Mode: BootModeESP,
-			Staleness: &StalenessResult{IsStale: true, Action: ActionDisable}},
-		// ESP stale fallback — kept
-		{Snapshot: testSnapshot("fallback", "/e"), Mode: BootModeESP,
-			Staleness: &StalenessResult{IsStale: true, Action: ActionFallback}},
-		// ESP stale delete — REMOVED
-		{Snapshot: testSnapshot("delete", "/f"), Mode: BootModeESP,
-			Staleness: &StalenessResult{IsStale: true, Action: ActionDelete}},
-	}
-
-	filtered := FilterSkipped(plans)
-	assert.Len(t, filtered, 5) // only delete removed
-
-	paths := make([]string, len(filtered))
-	for i, p := range filtered {
-		paths[i] = p.Snapshot.Path
-	}
-	assert.NotContains(t, paths, "delete")
-	assert.Contains(t, paths, "btrfs-snap")
-	assert.Contains(t, paths, "fresh")
-	assert.Contains(t, paths, "warn")
-	assert.Contains(t, paths, "disable")
-	assert.Contains(t, paths, "fallback")
 }
 
 // TestPlanner_MixedMode_LargeScale simulates a realistic scenario: 80 snapshots

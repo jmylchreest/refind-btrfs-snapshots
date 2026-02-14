@@ -6,6 +6,9 @@ import (
 	"strings"
 )
 
+// whitespaceRun matches one or more whitespace characters, used for collapsing runs.
+var whitespaceRun = regexp.MustCompile(`\s+`)
+
 // ParameterParser handles parameter extraction and manipulation from option strings
 type ParameterParser struct {
 	separators string
@@ -110,7 +113,7 @@ func (p *ParameterParser) RemoveAll(text, param string) string {
 	pattern := regexp.MustCompile(fmt.Sprintf(`\s*%s=([^%s]+)`,
 		regexp.QuoteMeta(param), p.separators))
 	result := pattern.ReplaceAllString(text, "")
-	return strings.TrimSpace(regexp.MustCompile(`\s+`).ReplaceAllString(result, " "))
+	return strings.TrimSpace(whitespaceRun.ReplaceAllString(result, " "))
 }
 
 // BootOptionsParser provides specialized parsing for boot options

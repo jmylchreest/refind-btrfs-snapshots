@@ -1,0 +1,6 @@
+# AIDE runtime files - do not commit
+_logs/
+state/
+bin/
+*.db
+*.bleve/

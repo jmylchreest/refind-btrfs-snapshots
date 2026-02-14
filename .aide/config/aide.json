@@ -1,0 +1,24 @@
+{
+  "tiers": {
+    "fast": "Cheapest/fastest model",
+    "balanced": "Good cost/capability balance",
+    "smart": "Most capable model"
+  },
+  "aliases": {
+    "opus": "smart",
+    "sonnet": "balanced",
+    "haiku": "fast",
+    "cheap": "fast",
+    "quick": "fast",
+    "thorough": "smart",
+    "best": "smart"
+  },
+  "hud": {
+    "enabled": true,
+    "elements": [
+      "mode",
+      "model",
+      "agents"
+    ]
+  }
+}

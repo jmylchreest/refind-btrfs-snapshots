@@ -1,6 +1,7 @@
 package kernel
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"os"
@@ -122,7 +123,7 @@ func InspectKernel(path string) (*InspectedMetadata, error) {
 
 	// Find null terminator
 	fullVersion := buf[:n]
-	if idx := indexOf(fullVersion, 0); idx >= 0 {
+	if idx := bytes.IndexByte(fullVersion, 0); idx >= 0 {
 		fullVersion = fullVersion[:idx]
 	}
 
@@ -196,28 +197,9 @@ func InspectInitramfs(path string) (*InspectedMetadata, error) {
 // matchCompression checks if the given bytes start with a known compression magic.
 func matchCompression(data []byte) string {
 	for _, cm := range compressionMagics {
-		if len(data) >= len(cm.magic) {
-			match := true
-			for i, b := range cm.magic {
-				if data[i] != b {
-					match = false
-					break
-				}
-			}
-			if match {
-				return cm.format
-			}
+		if bytes.HasPrefix(data, cm.magic) {
+			return cm.format
 		}
 	}
 	return ""
-}
-
-// indexOf returns the index of the first occurrence of b in data, or -1.
-func indexOf(data []byte, b byte) int {
-	for i, v := range data {
-		if v == b {
-			return i
-		}
-	}
-	return -1
 }

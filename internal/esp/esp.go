@@ -2,6 +2,7 @@ package esp
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -261,17 +262,17 @@ func (d *ESPDetector) findSysPath(deviceName string) string {
 	return ""
 }
 
-// findPartUUIDForDevice finds the PARTUUID for a device by checking /dev/disk/by-partuuid/
-func (d *ESPDetector) findPartUUIDForDevice(deviceName string) (string, error) {
-	partuuidDir := "/dev/disk/by-partuuid"
-	entries, err := os.ReadDir(partuuidDir)
+// findDeviceIdentifierInDir resolves a device's identifier by scanning symlinks
+// in the given /dev/disk/by-* directory (e.g. "/dev/disk/by-uuid").
+func (d *ESPDetector) findDeviceIdentifierInDir(dir, deviceName, label string) (string, error) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return "", err
 	}
 
 	devicePath := "/dev/" + deviceName
 	for _, entry := range entries {
-		linkPath := filepath.Join(partuuidDir, entry.Name())
+		linkPath := filepath.Join(dir, entry.Name())
 		target, err := os.Readlink(linkPath)
 		if err != nil {
 			continue
@@ -279,7 +280,7 @@ func (d *ESPDetector) findPartUUIDForDevice(deviceName string) (string, error) {
 
 		// Resolve relative symlink
 		if !filepath.IsAbs(target) {
-			target = filepath.Join(partuuidDir, target)
+			target = filepath.Join(dir, target)
 		}
 		target = filepath.Clean(target)
 
@@ -288,7 +289,12 @@ func (d *ESPDetector) findPartUUIDForDevice(deviceName string) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("PARTUUID not found for device %s", deviceName)
+	return "", fmt.Errorf("%s not found for device %s", label, deviceName)
+}
+
+// findPartUUIDForDevice finds the PARTUUID for a device by checking /dev/disk/by-partuuid/
+func (d *ESPDetector) findPartUUIDForDevice(deviceName string) (string, error) {
+	return d.findDeviceIdentifierInDir("/dev/disk/by-partuuid", deviceName, "PARTUUID")
 }
 
 // readFileContent reads content from a file, returning empty string on error
@@ -302,32 +308,7 @@ func (d *ESPDetector) readFileContent(path string) (string, error) {
 
 // findUUIDForDevice finds the UUID for a device by checking /dev/disk/by-uuid/
 func (d *ESPDetector) findUUIDForDevice(deviceName string) (string, error) {
-	uuidDir := "/dev/disk/by-uuid"
-	entries, err := os.ReadDir(uuidDir)
-	if err != nil {
-		return "", err
-	}
-
-	devicePath := "/dev/" + deviceName
-	for _, entry := range entries {
-		linkPath := filepath.Join(uuidDir, entry.Name())
-		target, err := os.Readlink(linkPath)
-		if err != nil {
-			continue
-		}
-
-		// Resolve relative symlink
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(uuidDir, target)
-		}
-		target = filepath.Clean(target)
-
-		if target == devicePath {
-			return entry.Name(), nil
-		}
-	}
-
-	return "", fmt.Errorf("UUID not found for device %s", deviceName)
+	return d.findDeviceIdentifierInDir("/dev/disk/by-uuid", deviceName, "UUID")
 }
 
 // isESP determines if a block device is an EFI System Partition
@@ -416,7 +397,7 @@ func (d *ESPDetector) ValidateESPPath(espPath string) error {
 	// Check if the mount point exists and is accessible
 	info, err := os.Stat(espPath)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("ESP mount point %s does not exist", espPath)
 		}
 		return fmt.Errorf("ESP mount point %s is not accessible: %w", espPath, err)
