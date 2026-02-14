@@ -254,6 +254,10 @@ func outputBootsetsJSON(bootSets []*kernel.BootSet, allImages []*kernel.BootImag
 			Modules:      row.Modules,
 		}
 		for i, result := range row.Results {
+			if i >= len(bootSets) {
+				log.Warn().Int("index", i).Int("boot_sets", len(bootSets)).Msg("Result index out of bounds")
+				break
+			}
 			if row.BootMode == kernel.BootModeBtrfs {
 				cj.BootSets = append(cj.BootSets, compatEntryJSON{
 					KernelName: bootSets[i].KernelName,

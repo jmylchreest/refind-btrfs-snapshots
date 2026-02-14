@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"golang.org/x/term"
@@ -221,34 +222,48 @@ func shouldUsePager(content string) bool {
 
 // showWithPager displays content using a pager
 func showWithPager(content string) {
-	// Try to find a suitable pager
+	// Try to find a suitable pager, validating paths are in trusted directories
 	pagers := []string{"less", "more", "cat"}
-	var pagerCmd string
+	var pagerPath string
 
 	for _, pager := range pagers {
-		if _, err := exec.LookPath(pager); err == nil {
-			pagerCmd = pager
-			break
+		path, err := exec.LookPath(pager)
+		if err != nil {
+			continue
 		}
+		// Validate the path is absolute and in a trusted directory
+		if !filepath.IsAbs(path) {
+			continue
+		}
+		// Only allow pagers from standard system directories
+		dir := filepath.Dir(path)
+		trustedDirs := map[string]bool{
+			"/usr/bin": true, "/bin": true, "/usr/local/bin": true,
+		}
+		if !trustedDirs[dir] {
+			continue
+		}
+		pagerPath = path
+		break
 	}
 
-	if pagerCmd == "" {
-		// Fallback to direct output if no pager found
+	if pagerPath == "" {
+		// Fallback to direct output if no trusted pager found
 		showDirect(content)
 		return
 	}
 
 	// Set up pager command
 	var cmd *exec.Cmd
-	if pagerCmd == "less" {
+	if filepath.Base(pagerPath) == "less" {
 		// Use less with useful options:
 		// -R: interpret ANSI color codes
 		// -S: don't wrap long lines
 		// -F: quit if content fits on one screen
 		// -X: don't clear screen on exit
-		cmd = exec.Command("less", "-RSF", "-X")
+		cmd = exec.Command(pagerPath, "-RSF", "-X")
 	} else {
-		cmd = exec.Command(pagerCmd)
+		cmd = exec.Command(pagerPath)
 	}
 
 	// Set up pipes
