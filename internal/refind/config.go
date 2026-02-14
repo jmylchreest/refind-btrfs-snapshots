@@ -422,23 +422,6 @@ func NewGeneratorWithBootSets(espPath string, scanner *kernel.Scanner, bootSets 
 	}
 }
 
-// updatePathForSnapshot updates a file path to point to the snapshot
-func (g *Generator) updatePathForSnapshot(originalPath string, snapshot *btrfs.Snapshot) string {
-	if originalPath == "" {
-		return ""
-	}
-
-	// Replace the subvolume path in the original path
-	// This assumes paths are in the format /@/path/to/file
-	if strings.HasPrefix(originalPath, "/@/") {
-		relativePath := strings.TrimPrefix(originalPath, "/@/")
-		return fmt.Sprintf("/@%s/%s", snapshot.Path, relativePath)
-	}
-
-	// Handle other path formats as needed
-	return originalPath
-}
-
 // updateOptionsForSnapshot updates boot options to point to the snapshot
 func (g *Generator) updateOptionsForSnapshot(originalOptions string, snapshot *btrfs.Snapshot) string {
 	if originalOptions == "" {
