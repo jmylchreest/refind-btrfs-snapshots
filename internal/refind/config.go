@@ -851,6 +851,30 @@ func (p *Parser) parseRefindLinuxConf(path string) ([]*MenuEntry, error) {
 	var entries []*MenuEntry
 	lineNumber := 0
 
+	// Scan for boot images once per file (not per line)
+	dir := filepath.Dir(path)
+	var dirLoader string
+	var dirInitrd string
+	if p.kernelScanner != nil {
+		if images, err := p.kernelScanner.ScanDir(dir); err == nil {
+			for _, img := range images {
+				switch img.Role {
+				case kernel.RoleKernel:
+					if dirLoader == "" {
+						dirLoader = img.Path
+					}
+				case kernel.RoleInitramfs:
+					if dirInitrd == "" {
+						dirInitrd = img.Path
+					}
+				}
+			}
+		}
+	} else {
+		dirLoader = p.findKernelInDir(dir)
+		dirInitrd = p.findInitrdInDir(dir)
+	}
+
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		lineNumber++
@@ -879,34 +903,10 @@ func (p *Parser) parseRefindLinuxConf(path string) ([]*MenuEntry, error) {
 			BootOptions: parseBootOptions(options),
 			SourceFile:  path,
 			LineNumber:  lineNumber,
+			Loader:      dirLoader,
 		}
-
-		// Try to infer loader and initrd from directory structure
-		dir := filepath.Dir(path)
-		if p.kernelScanner != nil {
-			// Use pattern-based scanner for comprehensive boot image detection
-			if images, err := p.kernelScanner.ScanDir(dir); err == nil {
-				for _, img := range images {
-					switch img.Role {
-					case kernel.RoleKernel:
-						if entry.Loader == "" {
-							entry.Loader = img.Path
-						}
-					case kernel.RoleInitramfs:
-						if len(entry.Initrd) == 0 {
-							entry.Initrd = []string{img.Path}
-						}
-					}
-				}
-			}
-		} else {
-			// Legacy hardcoded detection fallback
-			if loaderPath := p.findKernelInDir(dir); loaderPath != "" {
-				entry.Loader = loaderPath
-			}
-			if initrdPath := p.findInitrdInDir(dir); initrdPath != "" {
-				entry.Initrd = []string{initrdPath}
-			}
+		if dirInitrd != "" {
+			entry.Initrd = []string{dirInitrd}
 		}
 
 		entries = append(entries, entry)
