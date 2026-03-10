@@ -118,7 +118,7 @@ jobs:
     name: Build (linux/${{ matrix.goarch }})
     runs-on: ubuntu-latest
     needs: [prepare, test]
-    if: needs.prepare.outputs.should_skip != 'true'
+    if: needs.prepare.outputs.should_skip != 'true' && github.event_name == 'push'
     strategy:
       fail-fast: false
       matrix:
@@ -168,6 +168,34 @@ jobs:
           path: dist/assets/*
           if-no-files-found: error
           retention-days: 1
+
+  # ─── Stage 3b: Build check for PRs (no artifacts) ──────────────────────
+  build-check:
+    name: Build Check (linux/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    needs: [prepare, test]
+    if: needs.prepare.outputs.should_skip != 'true' && github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [amd64, arm64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - name: Build binary
+        env:
+          CGO_ENABLED: 0
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build -ldflags "-s -w" -o /dev/null .
 
   # ─── Stage 4: Create Release ──────────────────────────────────────────
   release:
@@ -368,3 +396,18 @@ jobs:
           commit_email: github-actions[bot]@users.noreply.github.com
           ssh_private_key: ${{ secrets.AUR_KEY }}
           commit_message: "Update to ${{ needs.prepare.outputs.version }}"
+
+  # ─── Stage 6: Cleanup artifacts to minimize storage billing ────────────
+  cleanup:
+    name: Cleanup Artifacts
+    runs-on: ubuntu-latest
+    needs: [build, release, publish-aur]
+    if: always() && needs.build.result == 'success'
+    steps:
+      - name: Delete all workflow artifacts
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: |
+            refind-btrfs-snapshots_linux_*
+            checksums
+          failOnError: false
