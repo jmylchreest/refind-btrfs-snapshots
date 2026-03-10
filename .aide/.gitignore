@@ -2,5 +2,6 @@
 _logs/
 state/
 bin/
+grammars/
 *.db
 *.bleve/
