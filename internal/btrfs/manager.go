@@ -2,18 +2,15 @@ package btrfs
 
 import (
 	"bufio"
-	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/esp"
@@ -21,62 +18,6 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// Filesystem represents a btrfs filesystem
-type Filesystem struct {
-	UUID       string      `json:"uuid"`
-	PartUUID   string      `json:"partuuid,omitempty"`
-	Label      string      `json:"label,omitempty"`
-	PartLabel  string      `json:"partlabel,omitempty"`
-	Device     string      `json:"device"`
-	MountPoint string      `json:"mountpoint"`
-	Subvolume  *Subvolume  `json:"subvolume,omitempty"`
-	Snapshots  []*Snapshot `json:"snapshots,omitempty"`
-}
-
-// Subvolume represents a btrfs subvolume
-type Subvolume struct {
-	ID          uint64    `json:"id"`
-	Path        string    `json:"path"`
-	ParentID    uint64    `json:"parent_id"`
-	Generation  uint64    `json:"generation"`
-	CreatedTime time.Time `json:"created_time"`
-	IsSnapshot  bool      `json:"is_snapshot"`
-	IsReadOnly  bool      `json:"is_readonly"`
-}
-
-// Snapshot represents a btrfs snapshot
-type Snapshot struct {
-	*Subvolume
-	OriginalPath   string    `json:"original_path"`
-	FilesystemPath string    `json:"filesystem_path"` // Path on filesystem for btrfs commands and file access
-	SnapshotTime   time.Time `json:"snapshot_time"`
-	Description    string    `json:"description,omitempty"`
-	SnapperNum     int       `json:"snapper_num,omitempty"`
-	SnapperType    string    `json:"snapper_type,omitempty"`
-}
-
-// SnapperInfo represents the snapper info.xml file structure
-type SnapperInfo struct {
-	XMLName     xml.Name `xml:"snapshot"`
-	Type        string   `xml:"type"`
-	Num         int      `xml:"num"`
-	Date        string   `xml:"date"`
-	Description string   `xml:"description"`
-	Cleanup     string   `xml:"cleanup"`
-}
-
-// MountInfo represents a mounted filesystem
-type MountInfo struct {
-	Device     string
-	Mountpoint string
-	Fstype     string
-	UUID       string
-	PartUUID   string
-	Label      string
-	PartLabel  string
-}
-
-// DeviceIdentifiers holds various ways to identify a device
 // Manager handles btrfs filesystem operations
 type Manager struct {
 	searchDirs     []string
@@ -705,155 +646,6 @@ func GetSnapshotFstabPath(snapshot *Snapshot) string {
 	return filepath.Join(snapshot.FilesystemPath, "etc", "fstab")
 }
 
-// GetSnapshotSizeWithoutProgress calculates the size of a snapshot using external file counter
-func GetSnapshotSizeWithoutProgress(path string, fileCount *int64) (string, error) {
-	if path == "" {
-		return "", fmt.Errorf("path cannot be empty")
-	}
-
-	// Check if path exists
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("path does not exist: %s", path)
-	}
-
-	// Try qgroups first (fast) - only if quotas are already enabled
-	if size, err := getSnapshotSizeFromQgroups(path); err == nil {
-		return size, nil
-	}
-
-	// Fallback to native Go calculation without internal progress (slow but accurate)
-	return getSnapshotSizeNativeExternal(path, fileCount)
-}
-
-// getSnapshotSizeFromQgroups tries to get snapshot size using btrfs qgroups (fast)
-// Only attempts if quotas are already enabled
-func getSnapshotSizeFromQgroups(path string) (string, error) {
-	// First, check if quotas are enabled by checking filesystem features
-	// This is faster than trying qgroup show and getting an error
-	cmd := exec.Command("btrfs", "filesystem", "show")
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("btrfs not available")
-	}
-
-	// Quick check: try to list qgroups without stderr to avoid noise
-	cmd = exec.Command("btrfs", "qgroup", "show", path)
-	output, err := cmd.Output()
-	if err != nil {
-		// Quotas not enabled - this is expected and not an error we should log
-		return "", fmt.Errorf("quotas not enabled")
-	}
-
-	// Check for inconsistent qgroup data warning
-	outputStr := string(output)
-	if strings.Contains(outputStr, "qgroup data inconsistent") || strings.Contains(outputStr, "0.00B") {
-		return "", fmt.Errorf("qgroup data inconsistent or incomplete")
-	}
-
-	// Get the subvolume ID for this path
-	subvolCmd := exec.Command("btrfs", "subvolume", "show", path)
-	subvolOutput, err := subvolCmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("failed to get subvolume info: %w", err)
-	}
-
-	// Parse subvolume ID from output
-	subvolID := ""
-	lines := strings.Split(string(subvolOutput), "\n")
-	for _, line := range lines {
-		if strings.Contains(line, "Subvolume ID:") {
-			parts := strings.Fields(line)
-			if len(parts) >= 3 {
-				subvolID = parts[2]
-				break
-			}
-		}
-	}
-
-	if subvolID == "" {
-		return "", fmt.Errorf("could not find subvolume ID")
-	}
-
-	// Parse qgroup output to find our subvolume's exclusive size
-	qgroupLines := strings.Split(string(output), "\n")
-	for _, line := range qgroupLines {
-		if strings.Contains(line, "0/"+subvolID) {
-			parts := strings.Fields(line)
-			if len(parts) >= 3 {
-				// Return exclusive size (3rd column)
-				return parts[2], nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("subvolume not found in qgroups")
-}
-
-// getSnapshotSizeNativeExternal calculates snapshot size using native Go with external file counter
-func getSnapshotSizeNativeExternal(path string, externalFileCount *int64) (string, error) {
-	var totalSize int64
-
-	// Use timeout to prevent hanging on large snapshots
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-
-	start := time.Now()
-	err := filepath.WalkDir(path, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			// Skip inaccessible files/directories instead of failing
-			return nil
-		}
-
-		// Check for timeout
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		if !d.IsDir() {
-			if info, err := d.Info(); err == nil {
-				atomic.AddInt64(&totalSize, info.Size())
-			}
-		}
-		atomic.AddInt64(externalFileCount, 1)
-		return nil
-	})
-
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return "timeout", nil
-		}
-		return "", fmt.Errorf("failed to calculate size: %w", err)
-	}
-
-	duration := time.Since(start)
-	log.Debug().
-		Int64("total_size", totalSize).
-		Int64("file_count", atomic.LoadInt64(externalFileCount)).
-		Dur("duration", duration).
-		Str("path", path).
-		Msg("Completed size calculation")
-
-	return formatBytes(totalSize), nil
-}
-
-// formatBytes converts bytes to human-readable format
-func formatBytes(bytes int64) string {
-	const unit = 1024
-	if bytes < unit {
-		return fmt.Sprintf("%d B", bytes)
-	}
-
-	units := []string{"KiB", "MiB", "GiB", "TiB", "PiB"}
-	div, exp := int64(unit), 0
-	for n := bytes / unit; n >= unit && exp < len(units)-1; n /= unit {
-		div *= unit
-		exp++
-	}
-
-	return fmt.Sprintf("%.1f %s", float64(bytes)/float64(div), units[exp])
-}
-
 // CleanupOldSnapshots removes old writable snapshots from the destination directory
 func (m *Manager) CleanupOldSnapshots(destDir string, keepCount int, r runner.Runner) error {
 	if keepCount < 0 {
@@ -940,78 +732,6 @@ func (m *Manager) getSnapperTimestamp(dateStr string) (time.Time, error) {
 	}
 
 	return time.Time{}, fmt.Errorf("unable to parse snapper date: %s", dateStr)
-}
-
-// FormatSnapshotTimeForDisplay formats a snapshot time for display (list commands)
-// Uses ISO8601 format and respects the local_time setting
-func FormatSnapshotTimeForDisplay(t time.Time, useLocalTime bool) string {
-	if useLocalTime {
-		return t.Local().Format("2006-01-02 15:04")
-	}
-	return t.UTC().Format("2006-01-02 15:04")
-}
-
-// FormatSnapshotTimeForMenu formats a snapshot time for menu entries using configured template.
-// Supports both Go time format strings (using reference time Mon Jan 2 15:04:05 MST 2006) and custom templates.
-// See https://pkg.go.dev/time#Time.Format for Go time format documentation.
-//
-// Custom template placeholders:
-// - YYYY: 4-digit year (2006)
-// - YY: 2-digit year (06)
-// - MM: 2-digit month (01)
-// - DD: 2-digit day (02)
-// - HH: 2-digit hour (15)
-// - mm: 2-digit minute (04)
-// - ss: 2-digit second (05)
-// Example: "btrfs snapshot: YYYY/MM/DD-HH:mm" -> "btrfs snapshot: 2025/06/14-17:32"
-func FormatSnapshotTimeForMenu(t time.Time, template string, useLocalTime bool) string {
-	var timeToUse time.Time
-	if useLocalTime {
-		timeToUse = t.Local()
-	} else {
-		timeToUse = t.UTC()
-	}
-
-	// Check if template contains custom placeholders
-	if strings.Contains(template, "YYYY") || strings.Contains(template, "YY") ||
-		strings.Contains(template, "MM") || strings.Contains(template, "DD") ||
-		strings.Contains(template, "HH") || strings.Contains(template, "mm") ||
-		strings.Contains(template, "ss") {
-
-		// Apply custom template substitutions
-		result := template
-		result = strings.ReplaceAll(result, "YYYY", timeToUse.Format("2006"))
-		result = strings.ReplaceAll(result, "YY", timeToUse.Format("06"))
-		result = strings.ReplaceAll(result, "MM", timeToUse.Format("01"))
-		result = strings.ReplaceAll(result, "DD", timeToUse.Format("02"))
-		result = strings.ReplaceAll(result, "HH", timeToUse.Format("15"))
-		result = strings.ReplaceAll(result, "mm", timeToUse.Format("04"))
-		result = strings.ReplaceAll(result, "ss", timeToUse.Format("05"))
-		return result
-	}
-
-	// Fall back to Go time format
-	return timeToUse.Format(template)
-}
-
-// FormatSnapshotTimeForRwsnap formats a snapshot time for rwsnap filenames
-// Similar to FormatSnapshotTimeForMenu but ensures filesystem-safe output
-// Automatically replaces problematic characters with safe alternatives
-func FormatSnapshotTimeForRwsnap(t time.Time, template string, useLocalTime bool) string {
-	result := FormatSnapshotTimeForMenu(t, template, useLocalTime)
-
-	// Replace filesystem-unsafe characters with safe alternatives
-	result = strings.ReplaceAll(result, "/", "-")
-	result = strings.ReplaceAll(result, "\\", "-")
-	result = strings.ReplaceAll(result, ":", "-")
-	result = strings.ReplaceAll(result, "<", "-")
-	result = strings.ReplaceAll(result, ">", "-")
-	result = strings.ReplaceAll(result, "|", "-")
-	result = strings.ReplaceAll(result, "?", "-")
-	result = strings.ReplaceAll(result, "*", "-")
-	result = strings.ReplaceAll(result, " ", "_")
-
-	return result
 }
 
 // CleanupSnapshotWritability ensures only selected snapshots are writable
