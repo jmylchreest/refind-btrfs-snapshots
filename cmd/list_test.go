@@ -214,7 +214,7 @@ func TestOutputSnapshotsTable(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := outputSnapshotsTable(snapshots, tt.showSize, tt.showVolume, false, nil)
+			err := outputSnapshotsTable(snapshots, tt.showSize, tt.showVolume, false)
 			assert.NoError(t, err)
 		})
 	}

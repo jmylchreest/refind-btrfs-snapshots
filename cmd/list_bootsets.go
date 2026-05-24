@@ -22,8 +22,6 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
-	"github.com/jmylchreest/refind-btrfs-snapshots/internal/fstab"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/kernel"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -122,104 +120,19 @@ func runListBootsets(cmd *cobra.Command, args []string) error {
 		Str("esp", espPath).
 		Msg("Boot image scan complete")
 
-	// Discover snapshots for the compatibility matrix
-	snapshots, btrfsManager := discoverSnapshots(cfg, nil)
-
-	// Build planner for per-snapshot boot mode detection
-	rootFS, _ := btrfsManager.GetRootFilesystem()
-
-	fstabMgr := fstab.NewManager()
-	staleAction := kernel.ParseStaleAction(cfg.Kernel.StaleSnapshotAction)
-	var checker *kernel.Checker
-	if len(bootSets) > 0 {
-		checker = kernel.NewChecker(staleAction)
-	}
-	var planner *kernel.Planner
-	if rootFS != nil {
-		planner = kernel.NewPlanner(fstabMgr, checker, bootSets, rootFS)
-	}
-
-	// Compute compatibility matrix with boot mode detection
-	var matrix []snapshotCompatibility
-	if len(snapshots) > 0 && len(bootSets) > 0 {
-		for _, snap := range snapshots {
-			// Detect boot mode for this snapshot
-			bootMode := kernel.BootModeESP
-			if planner != nil {
-				plans := planner.Plan([]*btrfs.Snapshot{snap})
-				if len(plans) > 0 {
-					bootMode = plans[0].Mode
-				}
-			}
-
-			compat := snapshotCompatibility{
-				Snapshot: snap,
-				BootMode: bootMode,
-				Modules:  kernel.GetSnapshotModuleVersions(snap.FilesystemPath),
-			}
-
-			if bootMode == kernel.BootModeBtrfs {
-				// Btrfs-mode: staleness not applicable, but populate results
-				// with placeholder entries so the table renders correctly
-				for range bootSets {
-					compat.Results = append(compat.Results, &kernel.StalenessResult{
-						IsStale: false,
-						Method:  "in_snapshot",
-					})
-				}
-			} else {
-				// ESP-mode: run staleness checks
-				for _, bs := range bootSets {
-					result := checker.CheckSnapshot(snap.FilesystemPath, bs)
-					compat.Results = append(compat.Results, result)
-				}
-			}
-			matrix = append(matrix, compat)
-		}
-	}
-
-	// Output
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 	showImages, _ := cmd.Flags().GetBool("show-images")
-	useLocalTime := cfg.Display.LocalTime
 
 	if jsonOutput {
-		return outputBootsetsJSON(bootSets, allImages, showImages, matrix, useLocalTime)
+		return outputBootsetsJSON(bootSets, allImages, showImages)
 	}
-
-	return outputBootsetsTable(bootSets, allImages, showImages, matrix, useLocalTime)
+	return outputBootsetsTable(bootSets, allImages, showImages)
 }
 
-// snapshotCompatibility holds one snapshot's staleness results against all boot sets.
-type snapshotCompatibility struct {
-	Snapshot *btrfs.Snapshot
-	BootMode kernel.BootMode
-	Modules  []string
-	Results  []*kernel.StalenessResult
-}
-
-// compatibilityJSON is the JSON representation of one snapshot's compatibility.
-type compatibilityJSON struct {
-	SnapshotPath string            `json:"snapshot_path"`
-	SnapshotTime string            `json:"snapshot_time"`
-	BootMode     string            `json:"boot_mode"`
-	Modules      []string          `json:"modules"`
-	BootSets     []compatEntryJSON `json:"boot_sets"`
-}
-
-type compatEntryJSON struct {
-	KernelName string `json:"kernel_name"`
-	Status     string `json:"status"` // fresh, stale, unknown
-	Method     string `json:"method,omitempty"`
-	Reason     string `json:"reason,omitempty"`
-	Action     string `json:"action,omitempty"`
-}
-
-func outputBootsetsJSON(bootSets []*kernel.BootSet, allImages []*kernel.BootImage, showImages bool, matrix []snapshotCompatibility, useLocalTime bool) error {
+func outputBootsetsJSON(bootSets []*kernel.BootSet, allImages []*kernel.BootImage, showImages bool) error {
 	type output struct {
-		BootSets      []bootSetJSON       `json:"boot_sets"`
-		Images        []bootImageJSON     `json:"images,omitempty"`
-		Compatibility []compatibilityJSON `json:"compatibility,omitempty"`
+		BootSets []bootSetJSON   `json:"boot_sets"`
+		Images   []bootImageJSON `json:"images,omitempty"`
 	}
 
 	out := output{}
@@ -248,46 +161,12 @@ func outputBootsetsJSON(bootSets []*kernel.BootSet, allImages []*kernel.BootImag
 		}
 	}
 
-	for _, row := range matrix {
-		cj := compatibilityJSON{
-			SnapshotPath: row.Snapshot.Path,
-			SnapshotTime: btrfs.FormatSnapshotTimeForDisplay(row.Snapshot.SnapshotTime, useLocalTime),
-			BootMode:     string(row.BootMode),
-			Modules:      row.Modules,
-		}
-		for i, result := range row.Results {
-			if i >= len(bootSets) {
-				log.Warn().Int("index", i).Int("boot_sets", len(bootSets)).Msg("Result index out of bounds")
-				break
-			}
-			if row.BootMode == kernel.BootModeBtrfs {
-				cj.BootSets = append(cj.BootSets, compatEntryJSON{
-					KernelName: bootSets[i].KernelName,
-					Status:     "n/a",
-					Method:     "in_snapshot",
-				})
-				continue
-			}
-			entry := compatEntryJSON{
-				KernelName: bootSets[i].KernelName,
-				Status:     result.StatusString(),
-				Method:     string(result.Method),
-				Reason:     string(result.Reason),
-			}
-			if result.IsStale {
-				entry.Action = string(result.Action)
-			}
-			cj.BootSets = append(cj.BootSets, entry)
-		}
-		out.Compatibility = append(out.Compatibility, cj)
-	}
-
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(out)
 }
 
-func outputBootsetsTable(bootSets []*kernel.BootSet, allImages []*kernel.BootImage, showImages bool, matrix []snapshotCompatibility, useLocalTime bool) error {
+func outputBootsetsTable(bootSets []*kernel.BootSet, allImages []*kernel.BootImage, showImages bool) error {
 	if showImages {
 		fmt.Printf("Boot Images (%d found)\n", len(allImages))
 		fmt.Println(strings.Repeat("─", 80))
@@ -360,54 +239,6 @@ func outputBootsetsTable(bootSets []*kernel.BootSet, allImages []*kernel.BootIma
 			}
 			fmt.Printf("    Microcode:      %s\n", strings.Join(mcPaths, ", "))
 		}
-	}
-
-	// Compatibility matrix
-	if len(matrix) > 0 {
-		fmt.Println()
-		fmt.Printf("Snapshot Compatibility (%d snapshots)\n", len(matrix))
-		fmt.Println(strings.Repeat("─", 80))
-
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-
-		// Header row
-		headers := []string{"SNAPSHOT TIME", "SNAPSHOT PATH", "BOOT"}
-		separators := []string{"─────────────", "─────────────", "────"}
-		for _, bs := range bootSets {
-			headers = append(headers, strings.ToUpper(bs.KernelName))
-			separators = append(separators, strings.Repeat("─", max(len(bs.KernelName), 7)))
-		}
-		headers = append(headers, "MODULES")
-		separators = append(separators, "───────")
-
-		fmt.Fprintln(w, strings.Join(headers, "\t"))
-		fmt.Fprintln(w, strings.Join(separators, "\t"))
-
-		for _, row := range matrix {
-			timeStr := btrfs.FormatSnapshotTimeForDisplay(row.Snapshot.SnapshotTime, useLocalTime)
-			cols := []string{timeStr, row.Snapshot.Path, string(row.BootMode)}
-
-			for _, result := range row.Results {
-				if row.BootMode == kernel.BootModeBtrfs {
-					cols = append(cols, "n/a")
-				} else {
-					cols = append(cols, result.StatusString())
-				}
-			}
-
-			modules := strings.Join(row.Modules, ", ")
-			if modules == "" {
-				modules = "(none)"
-			}
-			cols = append(cols, modules)
-
-			fmt.Fprintln(w, strings.Join(cols, "\t"))
-		}
-
-		w.Flush()
-	} else if len(bootSets) > 0 {
-		fmt.Println()
-		fmt.Println("No snapshots found for compatibility check")
 	}
 
 	return nil
