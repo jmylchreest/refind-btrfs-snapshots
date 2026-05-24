@@ -21,18 +21,17 @@ import (
 	"slices"
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/config"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/esp"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/kernel"
 	"github.com/rs/zerolog/log"
-	"github.com/spf13/viper"
 )
 
 // detectESPPath resolves the ESP mount point from config (uuid > auto_detect > mount_point).
-func detectESPPath() (string, error) {
-	espUUID := viper.GetString("esp.uuid")
+func detectESPPath(cfg *config.Config) (string, error) {
+	espUUID := cfg.ESP.UUID
 	espDetector := esp.NewESPDetector(espUUID)
 
-	// Resolution order: uuid > auto_detect > mount_point
 	if espUUID != "" {
 		detectedESP, err := espDetector.FindESP()
 		if err != nil {
@@ -48,7 +47,7 @@ func detectESPPath() (string, error) {
 		return detectedESP.MountPoint, nil
 	}
 
-	if viper.GetBool("esp.auto_detect") {
+	if cfg.ESP.AutoDetect {
 		detectedESP, err := espDetector.FindESP()
 		if err != nil {
 			return "", fmt.Errorf("failed to detect ESP: %w", err)
@@ -63,7 +62,7 @@ func detectESPPath() (string, error) {
 		return detectedESP.MountPoint, nil
 	}
 
-	if mp := viper.GetString("esp.mount_point"); mp != "" {
+	if mp := cfg.ESP.MountPoint; mp != "" {
 		log.Info().Str("path", mp).Msg("Using configured ESP path")
 		detector := esp.NewESPDetector("")
 		if err := detector.ValidateESPPath(mp); err != nil {
@@ -77,39 +76,23 @@ func detectESPPath() (string, error) {
 
 // buildKernelScanner creates a kernel.Scanner from config, using custom patterns
 // if configured or built-in defaults otherwise.
-func buildKernelScanner(espPath string) *kernel.Scanner {
-	var bootImagePatterns []kernel.PatternConfig
-	if patterns := viper.Get("kernel.boot_image_patterns"); patterns != nil {
-		if patternList, ok := patterns.([]interface{}); ok {
-			for _, p := range patternList {
-				if pm, ok := p.(map[string]interface{}); ok {
-					pc := kernel.PatternConfig{}
-					if g, ok := pm["glob"].(string); ok {
-						pc.Glob = g
-					}
-					if r, ok := pm["role"].(string); ok {
-						role, err := kernel.ParseImageRole(r)
-						if err != nil {
-							log.Warn().Err(err).Str("glob", pc.Glob).Msg("Invalid role in boot_image_patterns, skipping")
-							continue
-						}
-						pc.Role = role
-					}
-					if sp, ok := pm["strip_prefix"].(string); ok {
-						pc.StripPrefix = sp
-					}
-					if ss, ok := pm["strip_suffix"].(string); ok {
-						pc.StripSuffix = ss
-					}
-					if kn, ok := pm["kernel_name"].(string); ok {
-						pc.KernelName = kn
-					}
-					bootImagePatterns = append(bootImagePatterns, pc)
-				}
-			}
+func buildKernelScanner(espPath string, cfgPatterns []config.PatternConfig) *kernel.Scanner {
+	var patterns []kernel.PatternConfig
+	for _, p := range cfgPatterns {
+		role, err := kernel.ParseImageRole(p.Role)
+		if err != nil {
+			log.Warn().Err(err).Str("glob", p.Glob).Msg("Invalid role in boot_image_patterns, skipping")
+			continue
 		}
+		patterns = append(patterns, kernel.PatternConfig{
+			Glob:        p.Glob,
+			Role:        role,
+			StripPrefix: p.StripPrefix,
+			StripSuffix: p.StripSuffix,
+			KernelName:  p.KernelName,
+		})
 	}
-	return kernel.NewScanner(espPath, bootImagePatterns)
+	return kernel.NewScanner(espPath, patterns)
 }
 
 // scanBootImages discovers all boot images across standard ESP directories.
@@ -138,14 +121,14 @@ func scanBootImages(espPath string, scanner *kernel.Scanner) []*kernel.BootImage
 // detectBootSets is a convenience that detects the ESP, scans for boot images,
 // inspects kernels, and returns assembled boot sets. Returns nil on any error
 // (ESP not found, no images, etc.) so callers can gracefully degrade.
-func detectBootSets() []*kernel.BootSet {
-	espPath, err := detectESPPath()
+func detectBootSets(cfg *config.Config) []*kernel.BootSet {
+	espPath, err := detectESPPath(cfg)
 	if err != nil {
 		log.Debug().Err(err).Msg("Could not detect ESP for boot set discovery")
 		return nil
 	}
 
-	scanner := buildKernelScanner(espPath)
+	scanner := buildKernelScanner(espPath, cfg.Kernel.BootImagePatterns)
 	allImages := scanBootImages(espPath, scanner)
 	if len(allImages) == 0 {
 		log.Debug().Msg("No boot images found on ESP")
@@ -160,16 +143,14 @@ func detectBootSets() []*kernel.BootSet {
 }
 
 // discoverSnapshots detects btrfs filesystems, finds snapshots, deduplicates,
-// sorts newest-first, and applies the configured selection count. It returns
-// the discovered snapshots along with the btrfs manager for further use.
-func discoverSnapshots(searchDirOverrides []string) ([]*btrfs.Snapshot, *btrfs.Manager) {
-	searchDirs := viper.GetStringSlice("snapshot.search_directories")
+// sorts newest-first, and applies the configured selection count.
+func discoverSnapshots(cfg *config.Config, searchDirOverrides []string) ([]*btrfs.Snapshot, *btrfs.Manager) {
+	searchDirs := cfg.Snapshot.SearchDirectories
 	if len(searchDirOverrides) > 0 {
 		searchDirs = searchDirOverrides
 		log.Debug().Strs("search_dirs", searchDirs).Msg("Using overridden search directories")
 	}
-	maxDepth := viper.GetInt("snapshot.max_depth")
-	btrfsManager := btrfs.NewManager(searchDirs, maxDepth)
+	btrfsManager := btrfs.NewManager(searchDirs, cfg.Snapshot.MaxDepth)
 
 	filesystems, err := btrfsManager.DetectBtrfsFilesystems()
 	if err != nil {
@@ -193,13 +174,11 @@ func discoverSnapshots(searchDirOverrides []string) ([]*btrfs.Snapshot, *btrfs.M
 		}
 	}
 
-	// Sort newest first
 	slices.SortFunc(snapshots, func(a, b *btrfs.Snapshot) int {
 		return b.SnapshotTime.Compare(a.SnapshotTime)
 	})
 
-	// Apply selection count
-	if count := viper.GetInt("snapshot.selection_count"); count > 0 && len(snapshots) > count {
+	if count := cfg.Snapshot.SelectionCount; count > 0 && len(snapshots) > count {
 		snapshots = snapshots[:count]
 	}
 

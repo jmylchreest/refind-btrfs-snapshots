@@ -17,7 +17,6 @@ import (
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/kernel"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 const maxConcurrentSizeCalculations = 3
@@ -143,10 +142,12 @@ func showParallelProgress(activeSnapshots *sync.Map, totalSnapshots int, done ch
 func runListVolumes(cmd *cobra.Command, args []string) error {
 	log.Info().Msg("Listing btrfs volumes")
 
-	// Initialize btrfs manager
-	searchDirs := viper.GetStringSlice("snapshot.search_directories")
-	maxDepth := viper.GetInt("snapshot.max_depth")
-	btrfsManager := btrfs.NewManager(searchDirs, maxDepth)
+	cfg, err := loadConfig(cmd)
+	if err != nil {
+		return err
+	}
+
+	btrfsManager := btrfs.NewManager(cfg.Snapshot.SearchDirectories, cfg.Snapshot.MaxDepth)
 
 	// Detect all btrfs filesystems
 	filesystems, err := btrfsManager.DetectBtrfsFilesystems()
@@ -173,20 +174,22 @@ func runListVolumes(cmd *cobra.Command, args []string) error {
 func runListSnapshots(cmd *cobra.Command, args []string) error {
 	log.Info().Msg("Listing btrfs snapshots")
 
-	// Check flags
+	cfg, err := loadConfig(cmd)
+	if err != nil {
+		return err
+	}
+
 	showSize, _ := cmd.Flags().GetBool("show-size")
 	if showSize {
 		log.Info().Msg("Calculating snapshot sizes...")
 	}
 
-	// Initialize btrfs manager - use flag override if provided
-	searchDirs := viper.GetStringSlice("snapshot.search_directories")
+	searchDirs := cfg.Snapshot.SearchDirectories
 	if flagDirs, _ := cmd.Flags().GetStringSlice("search-dirs"); len(flagDirs) > 0 {
 		searchDirs = flagDirs
 		log.Debug().Strs("search_dirs", searchDirs).Msg("Using search directories from --search-dirs flag")
 	}
-	maxDepth := viper.GetInt("snapshot.max_depth")
-	btrfsManager := btrfs.NewManager(searchDirs, maxDepth)
+	btrfsManager := btrfs.NewManager(searchDirs, cfg.Snapshot.MaxDepth)
 
 	// Detect all btrfs filesystems
 	filesystems, err := btrfsManager.DetectBtrfsFilesystems()
@@ -203,7 +206,7 @@ func runListSnapshots(cmd *cobra.Command, args []string) error {
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 	showVolume, _ := cmd.Flags().GetBool("show-volume")
 	volumeFilter, _ := cmd.Flags().GetString("volume")
-	useLocalTime := viper.GetBool("display.local_time")
+	useLocalTime := cfg.Display.LocalTime
 
 	// Filter filesystems if volume specified
 	if volumeFilter != "" {
@@ -316,7 +319,7 @@ func runListSnapshots(cmd *cobra.Command, args []string) error {
 	noStaleness, _ := cmd.Flags().GetBool("no-staleness")
 	var bootSets []*kernel.BootSet
 	if !noStaleness {
-		bootSets = detectBootSets()
+		bootSets = detectBootSets(cfg)
 	}
 
 	// Get root filesystem for boot mode detection
@@ -327,7 +330,7 @@ func runListSnapshots(cmd *cobra.Command, args []string) error {
 	var planner *kernel.Planner
 	var checker *kernel.Checker
 	if len(bootSets) > 0 {
-		staleAction := kernel.ParseStaleAction(viper.GetString("kernel.stale_snapshot_action"))
+		staleAction := kernel.ParseStaleAction(cfg.Kernel.StaleSnapshotAction)
 		checker = kernel.NewChecker(staleAction)
 	}
 	if rootFS != nil {

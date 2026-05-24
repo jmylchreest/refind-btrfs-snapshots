@@ -10,7 +10,7 @@
   "esp.uuid": "",
   "force": false,
   "generate_include": false,
-  "kernel.boot_image_patterns": [{"glob":"vmlinuz-*","role":"kernel","strip_prefix":"vmlinuz-","strip_suffix":""},{"glob":"initramfs-*.img","role":"initramfs","strip_prefix":"initramfs-","strip_suffix":".img"},{"glob":"intel-ucode.img","role":"microcode","strip_prefix":"","strip_suffix":""}],
+  "kernel.boot_image_patterns": [{"glob":"vmlinuz-*","kernel_name":"","role":"kernel","strip_prefix":"vmlinuz-","strip_suffix":""},{"glob":"initramfs-*.img","kernel_name":"","role":"initramfs","strip_prefix":"initramfs-","strip_suffix":".img"},{"glob":"intel-ucode.img","kernel_name":"","role":"microcode","strip_prefix":"","strip_suffix":""}],
   "kernel.stale_snapshot_action": "fallback",
   "list.format": "",
   "list.show_all": false,

@@ -59,6 +59,7 @@ type PatternConfig struct {
 	Role        string `koanf:"role"`
 	StripPrefix string `koanf:"strip_prefix"`
 	StripSuffix string `koanf:"strip_suffix"`
+	KernelName  string `koanf:"kernel_name"`
 }
 
 type DisplayConfig struct {

@@ -34,7 +34,6 @@ import (
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/runner"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 var generateCmd = &cobra.Command{
@@ -58,54 +57,42 @@ func init() {
 	generateCmd.Flags().Bool("force", false, "Force generation even if booted from snapshot")
 	generateCmd.Flags().BoolP("generate-include", "g", false, "Force generation of refind-btrfs-snapshots.conf for inclusion into refind.conf")
 	generateCmd.Flags().BoolP("yes", "y", false, "Automatically approve all changes without prompting")
-
-	// Bind flags to viper
-	_ = viper.BindPFlag("refind.config_path", generateCmd.Flags().Lookup("config-path"))
-	_ = viper.BindPFlag("esp.mount_point", generateCmd.Flags().Lookup("esp-path"))
-	_ = viper.BindPFlag("snapshot.selection_count", generateCmd.Flags().Lookup("count"))
-	_ = viper.BindPFlag("dry_run", generateCmd.Flags().Lookup("dry-run"))
-	_ = viper.BindPFlag("force", generateCmd.Flags().Lookup("force"))
-	_ = viper.BindPFlag("generate_include", generateCmd.Flags().Lookup("generate-include"))
-	_ = viper.BindPFlag("yes", generateCmd.Flags().Lookup("yes"))
 }
 
 func runGenerate(cmd *cobra.Command, args []string) error {
 	log.Info().Msg("Starting rEFInd btrfs snapshot generation")
 
-	// Check if running as root and warn if not
+	cfg, err := loadConfig(cmd)
+	if err != nil {
+		return err
+	}
+
 	if err := checkRootPrivileges(); err != nil {
 		log.Warn().Err(err).Msg("Not running as root - some operations may fail")
 	}
 
-	// Initialize managers and runner
-	searchDirs := viper.GetStringSlice("snapshot.search_directories")
-	maxDepth := viper.GetInt("snapshot.max_depth")
-	btrfsManager := btrfs.NewManager(searchDirs, maxDepth)
+	btrfsManager := btrfs.NewManager(cfg.Snapshot.SearchDirectories, cfg.Snapshot.MaxDepth)
 	fstabManager := fstab.NewManager()
-	r := runner.New(viper.GetBool("dry_run"))
+	r := runner.New(cfg.DryRun)
 
-	// Get root filesystem first, to be reused
 	rootFS, err := btrfsManager.GetRootFilesystem()
 	if err != nil {
 		return fmt.Errorf("failed to get root filesystem: %w", err)
 	}
 
-	// Check if we're booted from a snapshot
-	if !viper.GetBool("force") && viper.GetBool("behavior.exit_on_snapshot_boot") {
+	if !cfg.Force && cfg.Behavior.ExitOnSnapshotBoot {
 		if btrfsManager.IsSnapshotBootFromRootFS(rootFS) {
 			log.Warn().Msg("Currently booted from a snapshot. Use --force to override or disable this check in config.")
 			return fmt.Errorf("refusing to generate configs while booted from snapshot")
 		}
 	}
 
-	// Detect ESP
-	espPath, err := detectESPPath()
+	espPath, err := detectESPPath(cfg)
 	if err != nil {
 		return err
 	}
 
-	// Build kernel scanner from config
-	kernelScanner := buildKernelScanner(espPath)
+	kernelScanner := buildKernelScanner(espPath, cfg.Kernel.BootImagePatterns)
 
 	// Root filesystem was already retrieved above
 
@@ -136,7 +123,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Select snapshots to use
-	selectionCount := viper.GetInt("snapshot.selection_count")
+	selectionCount := cfg.Snapshot.SelectionCount
 	var selectedSnapshots []*btrfs.Snapshot
 
 	// Handle special values for "all snapshots"
@@ -156,7 +143,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 
 	// Process snapshots for writability
 	var processedSnapshots []*btrfs.Snapshot
-	writableMethod := viper.GetString("snapshot.writable_method")
+	writableMethod := cfg.Snapshot.WritableMethod
 
 	log.Info().Str("method", writableMethod).Msg("Using writable snapshot method")
 
@@ -173,14 +160,14 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		}
 
 		// Clean up writability: make unselected snapshots read-only
-		if viper.GetBool("behavior.cleanup_old_snapshots") {
+		if cfg.Behavior.CleanupOldSnapshots {
 			if err := btrfsManager.CleanupSnapshotWritability(snapshots, selectedSnapshots, r); err != nil {
 				log.Warn().Err(err).Msg("Failed to cleanup snapshot writability")
 			}
 		}
 	} else if writableMethod == "copy" {
 		// Copy approach: create writable copies (legacy method)
-		destDir := viper.GetString("snapshot.destination_dir")
+		destDir := cfg.Snapshot.DestinationDir
 
 		for _, snapshot := range selectedSnapshots {
 			if snapshot.IsReadOnly {
@@ -200,7 +187,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		}
 
 		// Clean up old snapshots for copy method
-		if viper.GetBool("behavior.cleanup_old_snapshots") {
+		if cfg.Behavior.CleanupOldSnapshots {
 			if err := btrfsManager.CleanupOldSnapshots(destDir, selectionCount, r); err != nil {
 				log.Warn().Err(err).Msg("Failed to cleanup old snapshots")
 			}
@@ -230,7 +217,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create boot plans for each snapshot (per-snapshot boot mode detection)
-	staleAction := kernel.ParseStaleAction(viper.GetString("kernel.stale_snapshot_action"))
+	staleAction := kernel.ParseStaleAction(cfg.Kernel.StaleSnapshotAction)
 	var stalenessChecker *kernel.Checker
 	if len(bootSets) > 0 {
 		stalenessChecker = kernel.NewChecker(staleAction)
@@ -303,7 +290,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	refindParser := refind.NewParserWithScanner(espPath, kernelScanner)
 
 	// Try to find rEFInd config automatically first
-	configPath := viper.GetString("refind.config_path")
+	configPath := cfg.Refind.ConfigPath
 	if configPath == "/EFI/refind/refind.conf" { // Default value
 		// Try to auto-detect
 		if detectedPath, err := refindParser.FindRefindConfigPath(); err == nil {
@@ -404,7 +391,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 
 			// Since we're adding configs, record that snapshots are being added
 			for _, snapshot := range processedSnapshots {
-				snapshotDisplayName := btrfs.FormatSnapshotTimeForMenu(snapshot.SnapshotTime, viper.GetString("advanced.naming.menu_format"), viper.GetBool("display.local_time"))
+				snapshotDisplayName := btrfs.FormatSnapshotTimeForMenu(snapshot.SnapshotTime, cfg.Advanced.Naming.MenuFormat, cfg.Display.LocalTime)
 				operationSummary.AddedSnapshots = append(operationSummary.AddedSnapshots, snapshotDisplayName)
 			}
 		}
@@ -413,7 +400,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	// Create managed config file if:
 	// 1. We haven't updated any refind_linux.conf files AND we have other entries, OR
 	// 2. User explicitly requested include file generation with --generate-include
-	forceGenerateInclude := viper.GetBool("generate_include")
+	forceGenerateInclude := cfg.GenerateInclude
 	shouldGenerateInclude := (!updatedRefindLinuxConf && len(otherEntries) > 0 && len(processedSnapshots) > 0) || forceGenerateInclude
 
 	if shouldGenerateInclude {
@@ -442,7 +429,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 			// Since we're adding configs, record that snapshots are being added (avoid duplicates)
 			if len(operationSummary.AddedSnapshots) == 0 {
 				for _, snapshot := range processedSnapshots {
-					snapshotDisplayName := btrfs.FormatSnapshotTimeForMenu(snapshot.SnapshotTime, viper.GetString("advanced.naming.menu_format"), viper.GetBool("display.local_time"))
+					snapshotDisplayName := btrfs.FormatSnapshotTimeForMenu(snapshot.SnapshotTime, cfg.Advanced.Naming.MenuFormat, cfg.Display.LocalTime)
 					operationSummary.AddedSnapshots = append(operationSummary.AddedSnapshots, snapshotDisplayName)
 				}
 			}
@@ -456,7 +443,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 
 	// Record included snapshots (all snapshots selected for this run)
 	for _, snapshot := range processedSnapshots {
-		snapshotDisplayName := btrfs.FormatSnapshotTimeForMenu(snapshot.SnapshotTime, viper.GetString("advanced.naming.menu_format"), viper.GetBool("display.local_time"))
+		snapshotDisplayName := btrfs.FormatSnapshotTimeForMenu(snapshot.SnapshotTime, cfg.Advanced.Naming.MenuFormat, cfg.Display.LocalTime)
 		operationSummary.IncludedSnapshots = append(operationSummary.IncludedSnapshots, snapshotDisplayName)
 	}
 
@@ -464,7 +451,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 
 	// Show unified diff and ask for confirmation
 	if len(unifiedPatch.Files) > 0 {
-		autoApprove := viper.GetBool("yes")
+		autoApprove := cfg.Yes
 		if r.IsDryRun() {
 			// Always show diff, allow pager only if not auto-approving
 			diff.ShowPatchWithPager(unifiedPatch, !autoApprove)

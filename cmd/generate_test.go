@@ -8,7 +8,6 @@ import (
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/refind"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -429,105 +428,6 @@ func TestLogOperationSummary(t *testing.T) {
 	assert.NotPanics(t, func() {
 		logOperationSummary(summary, false)
 	})
-}
-
-func TestViperBindingsForGenerate(t *testing.T) {
-	// Test that viper bindings work for generate command flags
-	viper.Reset()
-	setDefaults()
-
-	// Set some test values that would normally come from flags
-	viper.Set("refind.config_path", "/custom/refind.conf")
-	viper.Set("esp.mount_point", "/custom/esp")
-	viper.Set("snapshot.selection_count", 5)
-	viper.Set("dry_run", true)
-	viper.Set("force", true)
-
-	assert.Equal(t, "/custom/refind.conf", viper.GetString("refind.config_path"))
-	assert.Equal(t, "/custom/esp", viper.GetString("esp.mount_point"))
-	assert.Equal(t, 5, viper.GetInt("snapshot.selection_count"))
-	assert.Equal(t, true, viper.GetBool("dry_run"))
-	assert.Equal(t, true, viper.GetBool("force"))
-}
-
-func TestGenerateConfigurationScenarios(t *testing.T) {
-	// Test various configuration scenarios that would be encountered
-	// in the generate command
-
-	tests := []struct {
-		name   string
-		config map[string]interface{}
-		valid  bool
-	}{
-		{
-			name: "toggle_method_valid",
-			config: map[string]interface{}{
-				"snapshot.writable_method":       "toggle",
-				"behavior.cleanup_old_snapshots": true,
-				"behavior.exit_on_snapshot_boot": true,
-				"esp.auto_detect":                true,
-				"snapshot.selection_count":       3,
-			},
-			valid: true,
-		},
-		{
-			name: "copy_method_valid",
-			config: map[string]interface{}{
-				"snapshot.writable_method":       "copy",
-				"snapshot.destination_dir":       "/.refind-btrfs-snapshots",
-				"behavior.cleanup_old_snapshots": true,
-				"esp.auto_detect":                false,
-				"esp.mount_point":                "/boot/efi",
-			},
-			valid: true,
-		},
-		{
-			name: "invalid_writable_method",
-			config: map[string]interface{}{
-				"snapshot.writable_method": "invalid",
-			},
-			valid: false,
-		},
-		{
-			name: "selection_count_zero_means_all",
-			config: map[string]interface{}{
-				"snapshot.selection_count": 0,
-			},
-			valid: true,
-		},
-		{
-			name: "negative_selection_count_means_all",
-			config: map[string]interface{}{
-				"snapshot.selection_count": -1,
-			},
-			valid: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			viper.Reset()
-			setDefaults()
-
-			// Apply test configuration
-			for key, value := range tt.config {
-				viper.Set(key, value)
-			}
-
-			// Verify the configuration was set
-			for key, expected := range tt.config {
-				actual := viper.Get(key)
-				assert.Equal(t, expected, actual, "Configuration key %s should be set correctly", key)
-			}
-
-			// Test specific validation logic
-			if writableMethod, exists := tt.config["snapshot.writable_method"]; exists {
-				method := writableMethod.(string)
-				isValid := method == "toggle" || method == "copy"
-				assert.Equal(t, tt.valid, isValid, "Writable method validation should match expected")
-			}
-		})
-	}
 }
 
 func TestGenerateSnapshotSelection(t *testing.T) {

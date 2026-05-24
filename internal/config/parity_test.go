@@ -1,6 +1,6 @@
-// Koanf parity test: runs the new typed loader against the same fixtures as
-// cmd/parity_test.go and asserts byte-identical output against the goldens
-// captured from the legacy viper-based code. Any drift = blocker.
+// Koanf parity test: runs the typed loader against fixtures in testdata/parity
+// and asserts byte-identical output against goldens originally captured from
+// the legacy viper-based code. Any drift = blocker.
 package config
 
 import (
@@ -13,13 +13,12 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/spf13/pflag"
 )
 
-const fixturesRoot = "../../cmd/testdata/parity"
+const fixturesRoot = "testdata/parity"
 
 type keyKind int
 
@@ -31,10 +30,10 @@ const (
 	kindAny
 )
 
-// trackedKeys must mirror the list in cmd/parity_test.go exactly. Each entry
-// maps a dotted config key to a typed accessor over the loaded *Config and
-// the accessor kind (for JSON shape). Kept here as a local mapping so this
-// test stays decoupled from cmd/.
+// trackedKeys lists every config key consulted by the codebase, with the
+// accessor used to read it from a *Config. Keep this in sync with the Config
+// struct — adding a key to Config means adding it here so parity coverage is
+// complete.
 var trackedKeys = []struct {
 	Name   string
 	Kind   keyKind
@@ -80,6 +79,7 @@ func bootPatternsAsMaps(patterns []PatternConfig) any {
 			"role":         p.Role,
 			"strip_prefix": p.StripPrefix,
 			"strip_suffix": p.StripSuffix,
+			"kernel_name":  p.KernelName,
 		}
 	}
 	return out
@@ -122,9 +122,9 @@ func runKoanfParityCase(t *testing.T, dir string) {
 		cfgFile = p
 	}
 
-	flags := buildFlagSet(t, filepath.Join(dir, "flags.txt"))
+	overrides := buildFlagOverrides(t, filepath.Join(dir, "flags.txt"))
 
-	cfg, err := Load(cfgFile, flags)
+	cfg, err := Load(cfgFile, overrides)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -170,35 +170,31 @@ func snapshotJSON(t *testing.T, cfg *Config) string {
 	return buf.String()
 }
 
-// buildFlagSet constructs a pflag.FlagSet pre-populated with the same flags
-// the real cobra commands declare, then marks the ones in flags.txt as set.
-// Mirrors the viper parity harness's flag-override mechanism.
-func buildFlagSet(t *testing.T, path string) *pflag.FlagSet {
+// buildFlagOverrides reads the fixture's flags.txt (already in koanf-key form)
+// and produces a typed map suitable for passing as the Load flagOverrides arg.
+// Booleans are coerced; everything else stays as a string.
+func buildFlagOverrides(t *testing.T, path string) map[string]any {
 	t.Helper()
-	flags := pflag.NewFlagSet("parity", pflag.ContinueOnError)
-	flags.String("log_level", "", "")
-	flags.String("refind.config_path", "", "")
-	flags.String("esp.mount_point", "", "")
-	flags.Int("snapshot.selection_count", 0, "")
-	flags.Bool("dry_run", false, "")
-	flags.Bool("force", false, "")
-	flags.Bool("generate_include", false, "")
-	flags.Bool("yes", false, "")
-	flags.Bool("display.local_time", false, "")
-	flags.Bool("list.show_all", false, "")
-	flags.Bool("list.show_size", false, "")
-	flags.String("list.format", "", "")
-
-	overrides := readKV(t, path)
-	for k, v := range overrides {
-		if f := flags.Lookup(k); f != nil {
-			if err := f.Value.Set(v); err != nil {
-				t.Fatalf("set flag %s=%s: %v", k, v, err)
+	raw := readKV(t, path)
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(raw))
+	for k, v := range raw {
+		switch strings.ToLower(v) {
+		case "true":
+			out[k] = true
+		case "false":
+			out[k] = false
+		default:
+			if i, err := strconv.Atoi(v); err == nil {
+				out[k] = i
+			} else {
+				out[k] = v
 			}
-			f.Changed = true
 		}
 	}
-	return flags
+	return out
 }
 
 func readKV(t *testing.T, path string) map[string]string {

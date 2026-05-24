@@ -20,125 +20,61 @@ package cmd
 import (
 	"os"
 
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/config"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 var (
 	cfgFile   string
-	logLevel  string
 	Version   = "dev"
 	Commit    = "unknown"
 	BuildTime = "unknown"
 )
 
-// rootCmd represents the base command when called without any subcommands
+// loadedCfg is the resolved configuration for the currently-executing command.
+// Populated by rootCmd.PersistentPreRunE before any subcommand's RunE runs;
+// subcommands and helpers read from it instead of holding their own copy.
+// Tests bypass this by constructing Config literals and invoking the typed
+// orchestration directly.
+var loadedCfg *config.Config
+
 var rootCmd = &cobra.Command{
 	Use:   "refind-btrfs-snapshots",
 	Short: "Generate rEFInd boot entries for btrfs snapshots",
 	Long: `Generate rEFInd boot menu entries for btrfs snapshots with automatic
 ESP detection, snapshot discovery, and configuration management.`,
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
-		initLogging()
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := loadConfig(cmd)
+		if err != nil {
+			return err
+		}
+		loadedCfg = cfg
+		initLogging(cfg.LogLevel)
+		return nil
 	},
 }
 
-// Execute adds all child commands to the root command and sets flags appropriately.
 func Execute() error {
 	return rootCmd.Execute()
 }
 
 func init() {
-	// Set up console logging immediately to ensure all output is formatted nicely
 	log.Logger = log.Output(zerolog.ConsoleWriter{
 		Out:        os.Stderr,
 		TimeFormat: "15:04:05",
 		NoColor:    false,
 	})
 
-	cobra.OnInitialize(initConfig)
-
-	// Global flags
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is /etc/refind-btrfs-snapshots.yaml)")
-	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "log level (trace, debug, info, warn, error, fatal, panic)")
+	rootCmd.PersistentFlags().String("log-level", "info", "log level (trace, debug, info, warn, error, fatal, panic)")
 	rootCmd.PersistentFlags().Bool("local-time", false, "Display times in local time instead of UTC")
-
-	// Bind flags to viper
-	_ = viper.BindPFlag("log_level", rootCmd.PersistentFlags().Lookup("log-level"))
-	_ = viper.BindPFlag("display.local_time", rootCmd.PersistentFlags().Lookup("local-time"))
 }
 
-// initConfig reads in config file and ENV variables if set.
-func initConfig() {
-	if cfgFile != "" {
-		// Use config file from the flag.
-		viper.SetConfigFile(cfgFile)
-	} else {
-		// Use a fixed default config file path
-		viper.SetConfigFile("/etc/refind-btrfs-snapshots.yaml")
-	}
-
-	// Read in environment variables that match
-	viper.SetEnvPrefix("REFIND_BTRFS_SNAPSHOTS")
-	viper.AutomaticEnv()
-
-	// Set default values
-	setDefaults()
-
-	// If a config file is found, read it in.
-	if err := viper.ReadInConfig(); err == nil {
-		log.Debug().Str("config_file", viper.ConfigFileUsed()).Msg("Using config file")
-	} else {
-		// Check if viper found a config file or not
-		if viper.ConfigFileUsed() == "" {
-			log.Debug().Msg("No config file found, using defaults")
-		} else {
-			log.Warn().Err(err).Str("config_file", viper.ConfigFileUsed()).Msg("Config file found but failed to parse, using defaults")
-		}
-	}
-}
-
-func setDefaults() {
-	// Snapshot configuration
-	viper.SetDefault("snapshot.search_directories", []string{"/.snapshots"})
-	viper.SetDefault("snapshot.max_depth", 3)
-	viper.SetDefault("snapshot.selection_count", 0)
-	viper.SetDefault("snapshot.destination_dir", "/.refind-btrfs-snapshots")
-	viper.SetDefault("snapshot.writable_method", "toggle")
-
-	// rEFInd configuration
-	viper.SetDefault("refind.config_path", "/EFI/refind/refind.conf")
-
-	// ESP configuration
-	viper.SetDefault("esp.auto_detect", true)
-	viper.SetDefault("esp.uuid", "")
-	viper.SetDefault("esp.mount_point", "")
-
-	// Behavior configuration
-	viper.SetDefault("behavior.exit_on_snapshot_boot", true)
-	viper.SetDefault("behavior.cleanup_old_snapshots", true)
-
-	// Kernel detection & staleness
-	viper.SetDefault("kernel.stale_snapshot_action", "delete")
-	// kernel.boot_image_patterns is intentionally left unset so DefaultPatterns() is used
-
-	// Logging
-	viper.SetDefault("log_level", "info")
-
-	// Advanced configuration
-	viper.SetDefault("advanced.naming.rwsnap_format", "2006-01-02_15-04-05")
-	viper.SetDefault("advanced.naming.menu_format", "2006-01-02T15:04:05Z")
-	viper.SetDefault("display.local_time", false)
-}
-
-func initLogging() {
-	// Configure zerolog
+func initLogging(level string) {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
 
-	// Set log level
-	level := viper.GetString("log_level")
 	parsed, err := zerolog.ParseLevel(level)
 	if err != nil || parsed == zerolog.NoLevel {
 		parsed = zerolog.InfoLevel

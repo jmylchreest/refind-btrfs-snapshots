@@ -27,7 +27,6 @@ import (
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/kernel"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 var listBootsetsCmd = &cobra.Command{
@@ -93,14 +92,17 @@ func toBootImageJSON(img *kernel.BootImage) *bootImageJSON {
 }
 
 func runListBootsets(cmd *cobra.Command, args []string) error {
-	// Detect ESP
-	espPath, err := detectESPPath()
+	cfg, err := loadConfig(cmd)
 	if err != nil {
 		return err
 	}
 
-	// Build scanner and discover images
-	scanner := buildKernelScanner(espPath)
+	espPath, err := detectESPPath(cfg)
+	if err != nil {
+		return err
+	}
+
+	scanner := buildKernelScanner(espPath, cfg.Kernel.BootImagePatterns)
 	allImages := scanBootImages(espPath, scanner)
 
 	if len(allImages) == 0 {
@@ -121,13 +123,13 @@ func runListBootsets(cmd *cobra.Command, args []string) error {
 		Msg("Boot image scan complete")
 
 	// Discover snapshots for the compatibility matrix
-	snapshots, btrfsManager := discoverSnapshots(nil)
+	snapshots, btrfsManager := discoverSnapshots(cfg, nil)
 
 	// Build planner for per-snapshot boot mode detection
 	rootFS, _ := btrfsManager.GetRootFilesystem()
 
 	fstabMgr := fstab.NewManager()
-	staleAction := kernel.ParseStaleAction(viper.GetString("kernel.stale_snapshot_action"))
+	staleAction := kernel.ParseStaleAction(cfg.Kernel.StaleSnapshotAction)
 	var checker *kernel.Checker
 	if len(bootSets) > 0 {
 		checker = kernel.NewChecker(staleAction)
@@ -179,7 +181,7 @@ func runListBootsets(cmd *cobra.Command, args []string) error {
 	// Output
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 	showImages, _ := cmd.Flags().GetBool("show-images")
-	useLocalTime := viper.GetBool("display.local_time")
+	useLocalTime := cfg.Display.LocalTime
 
 	if jsonOutput {
 		return outputBootsetsJSON(bootSets, allImages, showImages, matrix, useLocalTime)

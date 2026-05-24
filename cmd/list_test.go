@@ -7,7 +7,6 @@ import (
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -407,17 +406,3 @@ func TestListCommandFlags(t *testing.T) {
 	assert.Equal(t, "", volumeFlag.DefValue)
 }
 
-func TestViperBindingsForList(t *testing.T) {
-	// Test that viper bindings work for list command flags
-	viper.Reset()
-	setDefaults()
-
-	// Set some test values
-	viper.Set("list.show_all", true)
-	viper.Set("list.format", "json")
-	viper.Set("list.show_size", true)
-
-	assert.Equal(t, true, viper.GetBool("list.show_all"))
-	assert.Equal(t, "json", viper.GetString("list.format"))
-	assert.Equal(t, true, viper.GetBool("list.show_size"))
-}
