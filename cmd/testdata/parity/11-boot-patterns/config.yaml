@@ -11,3 +11,5 @@ kernel:
       strip_suffix: ".img"
     - glob: "intel-ucode.img"
       role: "microcode"
+      strip_prefix: ""
+      strip_suffix: ""

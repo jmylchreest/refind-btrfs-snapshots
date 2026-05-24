@@ -4,12 +4,12 @@
   "behavior.cleanup_old_snapshots": false,
   "behavior.exit_on_snapshot_boot": false,
   "display.local_time": true,
-  "dry_run": null,
+  "dry_run": false,
   "esp.auto_detect": false,
   "esp.mount_point": "/custom/esp",
   "esp.uuid": "12345678-1234-1234-1234-123456789ABC",
-  "force": null,
-  "generate_include": null,
+  "force": false,
+  "generate_include": false,
   "kernel.boot_image_patterns": null,
   "kernel.stale_snapshot_action": "warn",
   "list.format": "json",
@@ -22,5 +22,5 @@
   "snapshot.search_directories": ["/custom/.snapshots","/var/snapshots"],
   "snapshot.selection_count": 10,
   "snapshot.writable_method": "copy",
-  "yes": null
+  "yes": false
 }

@@ -19,34 +19,50 @@ import (
 	"github.com/spf13/viper"
 )
 
-// trackedKeys lists every config key actually consulted by the codebase.
-// Anything new added here must also be added to the koanf Config struct
-// during the migration, and the parity snapshot will detect the drift.
-var trackedKeys = []string{
-	"advanced.naming.menu_format",
-	"advanced.naming.rwsnap_format",
-	"behavior.cleanup_old_snapshots",
-	"behavior.exit_on_snapshot_boot",
-	"display.local_time",
-	"dry_run",
-	"esp.auto_detect",
-	"esp.mount_point",
-	"esp.uuid",
-	"force",
-	"generate_include",
-	"kernel.boot_image_patterns",
-	"kernel.stale_snapshot_action",
-	"list.format",
-	"list.show_all",
-	"list.show_size",
-	"log_level",
-	"refind.config_path",
-	"snapshot.destination_dir",
-	"snapshot.max_depth",
-	"snapshot.search_directories",
-	"snapshot.selection_count",
-	"snapshot.writable_method",
-	"yes",
+// keyKind is the typed accessor used for a config key, chosen to match what
+// the application actually calls (viper.GetBool, GetString, GetInt, GetStringSlice,
+// or untyped Get). Using typed getters in the snapshot makes the goldens reflect
+// what the application sees, not viper's internal nil-for-unset representation.
+type keyKind int
+
+const (
+	kindString keyKind = iota
+	kindBool
+	kindInt
+	kindStringSlice
+	kindAny
+)
+
+// trackedKeys lists every config key consulted by the codebase, with the
+// accessor type used to read it. Keep this in sync with the Config struct.
+var trackedKeys = []struct {
+	Name string
+	Kind keyKind
+}{
+	{"advanced.naming.menu_format", kindString},
+	{"advanced.naming.rwsnap_format", kindString},
+	{"behavior.cleanup_old_snapshots", kindBool},
+	{"behavior.exit_on_snapshot_boot", kindBool},
+	{"display.local_time", kindBool},
+	{"dry_run", kindBool},
+	{"esp.auto_detect", kindBool},
+	{"esp.mount_point", kindString},
+	{"esp.uuid", kindString},
+	{"force", kindBool},
+	{"generate_include", kindBool},
+	{"kernel.boot_image_patterns", kindAny},
+	{"kernel.stale_snapshot_action", kindString},
+	{"list.format", kindString},
+	{"list.show_all", kindBool},
+	{"list.show_size", kindBool},
+	{"log_level", kindString},
+	{"refind.config_path", kindString},
+	{"snapshot.destination_dir", kindString},
+	{"snapshot.max_depth", kindInt},
+	{"snapshot.search_directories", kindStringSlice},
+	{"snapshot.selection_count", kindInt},
+	{"snapshot.writable_method", kindString},
+	{"yes", kindBool},
 }
 
 func TestConfigParity(t *testing.T) {
@@ -129,8 +145,9 @@ func runParityCase(t *testing.T, dir string) {
 	}
 }
 
-// snapshotJSON dumps all tracked keys as deterministic JSON.
-// Keys are sorted; values use json.Marshal for stable formatting.
+// snapshotJSON dumps all tracked keys using typed accessors and serializes
+// as deterministic JSON. Keys sorted; uses the same typed getters the
+// application uses, so the snapshot reflects what runtime code sees.
 func snapshotJSON(t *testing.T) string {
 	t.Helper()
 
@@ -140,7 +157,7 @@ func snapshotJSON(t *testing.T) string {
 	}
 	entries := make([]entry, 0, len(trackedKeys))
 	for _, k := range trackedKeys {
-		entries = append(entries, entry{Key: k, Value: viper.Get(k)})
+		entries = append(entries, entry{Key: k.Name, Value: typedGet(k.Name, k.Kind)})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Key < entries[j].Key })
 
@@ -159,6 +176,23 @@ func snapshotJSON(t *testing.T) string {
 	}
 	buf.WriteString("}\n")
 	return buf.String()
+}
+
+func typedGet(name string, kind keyKind) any {
+	switch kind {
+	case kindString:
+		return viper.GetString(name)
+	case kindBool:
+		return viper.GetBool(name)
+	case kindInt:
+		return viper.GetInt(name)
+	case kindStringSlice:
+		return viper.GetStringSlice(name)
+	case kindAny:
+		return viper.Get(name)
+	default:
+		return nil
+	}
 }
 
 // coerceFlagValue stores bools as typed values so viper.Get returns them

@@ -8,13 +8,13 @@
   "esp.auto_detect": true,
   "esp.mount_point": "",
   "esp.uuid": "",
-  "force": null,
+  "force": false,
   "generate_include": true,
   "kernel.boot_image_patterns": null,
   "kernel.stale_snapshot_action": "delete",
-  "list.format": null,
-  "list.show_all": null,
-  "list.show_size": null,
+  "list.format": "",
+  "list.show_all": false,
+  "list.show_size": false,
   "log_level": "info",
   "refind.config_path": "/EFI/refind/refind.conf",
   "snapshot.destination_dir": "/.refind-btrfs-snapshots",
@@ -22,5 +22,5 @@
   "snapshot.search_directories": ["/.snapshots"],
   "snapshot.selection_count": 0,
   "snapshot.writable_method": "toggle",
-  "yes": null
+  "yes": false
 }
