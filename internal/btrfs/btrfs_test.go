@@ -12,7 +12,7 @@ func TestNewManager(t *testing.T) {
 	searchDirs := []string{"/.snapshots", "/snapshots"}
 	maxDepth := 3
 
-	manager := NewManager(searchDirs, maxDepth)
+	manager := NewManager(searchDirs, maxDepth, "2006-01-02_15-04-05", false)
 
 	if manager == nil {
 		t.Fatal("NewManager returned nil")
@@ -34,7 +34,7 @@ func TestNewManager(t *testing.T) {
 }
 
 func TestParseSubvolumeShow(t *testing.T) {
-	manager := NewManager([]string{}, 0)
+	manager := NewManager([]string{}, 0, "2006-01-02_15-04-05", false)
 
 	testOutput := `@
 UUID: 			5b8c8a5e-3f4d-4a8b-9c2d-1e6f7a8b9c0d
@@ -81,7 +81,7 @@ Snapshot(s):`
 }
 
 func TestParseSubvolumeShowReadOnly(t *testing.T) {
-	manager := NewManager([]string{}, 0)
+	manager := NewManager([]string{}, 0, "2006-01-02_15-04-05", false)
 
 	testOutput := `snapshot
 UUID: 			5b8c8a5e-3f4d-4a8b-9c2d-1e6f7a8b9c0d
@@ -128,7 +128,7 @@ func TestGetSnapshotFstabPath(t *testing.T) {
 }
 
 func TestIsSnapshotOfRoot(t *testing.T) {
-	manager := NewManager([]string{}, 0)
+	manager := NewManager([]string{}, 0, "2006-01-02_15-04-05", false)
 
 	// Create mock subvolumes
 	rootSubvol := &Subvolume{
@@ -257,7 +257,7 @@ func TestFilesystem(t *testing.T) {
 
 // Benchmark tests
 func BenchmarkParseSubvolumeShow(b *testing.B) {
-	manager := NewManager([]string{}, 0)
+	manager := NewManager([]string{}, 0, "2006-01-02_15-04-05", false)
 	testOutput := `Name: 			@
 UUID: 			5b8c8a5e-3f4d-4a8b-9c2d-1e6f7a8b9c0d
 Parent UUID: 		-
@@ -383,7 +383,7 @@ func TestFormatSnapshotTimeForRwsnap(t *testing.T) {
 }
 
 func TestGetSnapperTimestamp(t *testing.T) {
-	manager := NewManager([]string{}, 0)
+	manager := NewManager([]string{}, 0, "2006-01-02_15-04-05", false)
 
 	tests := []struct {
 		name        string
@@ -430,7 +430,7 @@ func TestGetSnapperTimestamp(t *testing.T) {
 }
 
 func TestLooksLikeSnapshot(t *testing.T) {
-	manager := NewManager([]string{"/.snapshots"}, 0)
+	manager := NewManager([]string{"/.snapshots"}, 0, "2006-01-02_15-04-05", false)
 
 	tests := []struct {
 		name     string
@@ -521,7 +521,7 @@ func TestFormatBytes(t *testing.T) {
 }
 
 func TestIsSnapshotBootFromRootFS(t *testing.T) {
-	manager := NewManager(nil, 0)
+	manager := NewManager(nil, 0, "2006-01-02_15-04-05", false)
 
 	tests := []struct {
 		name     string

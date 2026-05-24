@@ -147,7 +147,7 @@ func runListVolumes(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	btrfsManager := btrfs.NewManager(cfg.Snapshot.SearchDirectories, cfg.Snapshot.MaxDepth)
+	btrfsManager := btrfs.NewManager(cfg.Snapshot.SearchDirectories, cfg.Snapshot.MaxDepth, cfg.Advanced.Naming.RwsnapFormat, cfg.Display.LocalTime)
 
 	// Detect all btrfs filesystems
 	filesystems, err := btrfsManager.DetectBtrfsFilesystems()
@@ -189,7 +189,7 @@ func runListSnapshots(cmd *cobra.Command, args []string) error {
 		searchDirs = flagDirs
 		log.Debug().Strs("search_dirs", searchDirs).Msg("Using search directories from --search-dirs flag")
 	}
-	btrfsManager := btrfs.NewManager(searchDirs, cfg.Snapshot.MaxDepth)
+	btrfsManager := btrfs.NewManager(searchDirs, cfg.Snapshot.MaxDepth, cfg.Advanced.Naming.RwsnapFormat, cfg.Display.LocalTime)
 
 	// Detect all btrfs filesystems
 	filesystems, err := btrfsManager.DetectBtrfsFilesystems()

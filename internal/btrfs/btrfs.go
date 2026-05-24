@@ -19,7 +19,6 @@ import (
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/esp"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/runner"
 	"github.com/rs/zerolog/log"
-	"github.com/spf13/viper"
 )
 
 // Filesystem represents a btrfs filesystem
@@ -80,15 +79,25 @@ type MountInfo struct {
 // DeviceIdentifiers holds various ways to identify a device
 // Manager handles btrfs filesystem operations
 type Manager struct {
-	searchDirs []string
-	maxDepth   int
+	searchDirs     []string
+	maxDepth       int
+	rwsnapFormat   string
+	useLocalTime   bool
 }
 
-// NewManager creates a new btrfs manager
-func NewManager(searchDirs []string, maxDepth int) *Manager {
+// NewManager creates a new btrfs manager.
+// rwsnapFormat is the time.Format layout used for naming writable snapshot
+// copies (e.g. "2006-01-02_15-04-05"); useLocalTime renders the timestamp
+// in local time instead of UTC.
+func NewManager(searchDirs []string, maxDepth int, rwsnapFormat string, useLocalTime bool) *Manager {
+	if rwsnapFormat == "" {
+		rwsnapFormat = "2006-01-02_15-04-05"
+	}
 	return &Manager{
-		searchDirs: searchDirs,
-		maxDepth:   maxDepth,
+		searchDirs:   searchDirs,
+		maxDepth:     maxDepth,
+		rwsnapFormat: rwsnapFormat,
+		useLocalTime: useLocalTime,
 	}
 }
 
@@ -207,12 +216,7 @@ func (m *Manager) CreateWritableSnapshot(snapshot *Snapshot, destDir string, r r
 		return nil, fmt.Errorf("invalid snapshot provided")
 	}
 
-	// Generate snapshot name using configured rwsnap timestamp format
-	timestampFormat := viper.GetString("advanced.naming.rwsnap_format")
-	if timestampFormat == "" {
-		timestampFormat = "2006-01-02_15-04-05" // Default format
-	}
-	formattedTime := FormatSnapshotTimeForRwsnap(snapshot.SnapshotTime, timestampFormat, viper.GetBool("display.local_time"))
+	formattedTime := FormatSnapshotTimeForRwsnap(snapshot.SnapshotTime, m.rwsnapFormat, m.useLocalTime)
 	snapshotName := fmt.Sprintf("rwsnap_%s_ID%d", formattedTime, snapshot.ID)
 	destPath := filepath.Join(destDir, snapshotName)
 

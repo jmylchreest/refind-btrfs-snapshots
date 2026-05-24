@@ -71,7 +71,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		log.Warn().Err(err).Msg("Not running as root - some operations may fail")
 	}
 
-	btrfsManager := btrfs.NewManager(cfg.Snapshot.SearchDirectories, cfg.Snapshot.MaxDepth)
+	btrfsManager := btrfs.NewManager(cfg.Snapshot.SearchDirectories, cfg.Snapshot.MaxDepth, cfg.Advanced.Naming.RwsnapFormat, cfg.Display.LocalTime)
 	fstabManager := fstab.NewManager()
 	r := runner.New(cfg.DryRun)
 
@@ -334,7 +334,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		Msg("Checking valid entries")
 
 	// Generate snapshot configurations
-	generator := refind.NewGeneratorWithBootPlans(espPath, kernelScanner, bootSets, allPlans)
+	generator := refind.NewGeneratorWithBootPlans(espPath, cfg.Advanced.Naming.MenuFormat, cfg.Display.LocalTime, kernelScanner, bootSets, allPlans)
 
 	// Separate entries by source type
 	var refindLinuxEntries []*refind.MenuEntry

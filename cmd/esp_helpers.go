@@ -150,7 +150,7 @@ func discoverSnapshots(cfg *config.Config, searchDirOverrides []string) ([]*btrf
 		searchDirs = searchDirOverrides
 		log.Debug().Strs("search_dirs", searchDirs).Msg("Using overridden search directories")
 	}
-	btrfsManager := btrfs.NewManager(searchDirs, cfg.Snapshot.MaxDepth)
+	btrfsManager := btrfs.NewManager(searchDirs, cfg.Snapshot.MaxDepth, cfg.Advanced.Naming.RwsnapFormat, cfg.Display.LocalTime)
 
 	filesystems, err := btrfsManager.DetectBtrfsFilesystems()
 	if err != nil {
