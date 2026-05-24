@@ -383,53 +383,6 @@ func TestCheckRootPrivileges(t *testing.T) {
 	}
 }
 
-func TestOperationSummary(t *testing.T) {
-	summary := &OperationSummary{
-		IncludedSnapshots: []string{"snapshot1", "snapshot2"},
-		AddedSnapshots:    []string{"snapshot1"},
-		RemovedSnapshots:  []string{},
-		UpdatedFstabs:     []string{"/snapshot1/etc/fstab"},
-		UpdatedConfigs:    []string{"/boot/refind.conf"},
-		WritableChanges:   []string{"made snapshot1 writable"},
-	}
-
-	// Test that the structure holds the expected data
-	assert.Len(t, summary.IncludedSnapshots, 2)
-	assert.Len(t, summary.AddedSnapshots, 1)
-	assert.Len(t, summary.RemovedSnapshots, 0)
-	assert.Len(t, summary.UpdatedFstabs, 1)
-	assert.Len(t, summary.UpdatedConfigs, 1)
-	assert.Len(t, summary.WritableChanges, 1)
-
-	assert.Equal(t, "snapshot1", summary.IncludedSnapshots[0])
-	assert.Equal(t, "snapshot2", summary.IncludedSnapshots[1])
-	assert.Equal(t, "snapshot1", summary.AddedSnapshots[0])
-	assert.Equal(t, "/snapshot1/etc/fstab", summary.UpdatedFstabs[0])
-	assert.Equal(t, "/boot/refind.conf", summary.UpdatedConfigs[0])
-	assert.Equal(t, "made snapshot1 writable", summary.WritableChanges[0])
-}
-
-func TestLogOperationSummary(t *testing.T) {
-	summary := &OperationSummary{
-		IncludedSnapshots: []string{"snapshot1"},
-		AddedSnapshots:    []string{"snapshot1"},
-		RemovedSnapshots:  []string{},
-		UpdatedFstabs:     []string{"/fstab"},
-		UpdatedConfigs:    []string{"/config"},
-		WritableChanges:   []string{"change1"},
-	}
-
-	// Test that the function doesn't panic with dry run
-	assert.NotPanics(t, func() {
-		logOperationSummary(summary, true)
-	})
-
-	// Test that the function doesn't panic without dry run
-	assert.NotPanics(t, func() {
-		logOperationSummary(summary, false)
-	})
-}
-
 func TestGenerateSnapshotSelection(t *testing.T) {
 	// Test snapshot selection logic
 	snapshots := []*btrfs.Snapshot{

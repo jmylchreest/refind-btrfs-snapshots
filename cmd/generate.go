@@ -20,15 +20,12 @@ package cmd
 import (
 	"fmt"
 	"os/user"
-	"path/filepath"
-	"sort"
-	"strings"
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/diff"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/fstab"
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/generator"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/kernel"
-	"github.com/jmylchreest/refind-btrfs-snapshots/internal/refind"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/runner"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -69,452 +66,70 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		log.Warn().Err(err).Msg("Not running as root - some operations may fail")
 	}
 
-	btrfsManager := btrfs.NewManager(cfg.Snapshot.SearchDirectories, cfg.Snapshot.MaxDepth, cfg.Advanced.Naming.RwsnapFormat, cfg.Display.LocalTime)
-	fstabManager := fstab.NewManager()
-	r := runner.New(cfg.DryRun)
-
-	rootFS, err := btrfsManager.GetRootFilesystem()
-	if err != nil {
-		return fmt.Errorf("failed to get root filesystem: %w", err)
-	}
-
-	if !cfg.Force && cfg.Behavior.ExitOnSnapshotBoot {
-		if btrfsManager.IsSnapshotBootFromRootFS(rootFS) {
-			log.Warn().Msg("Currently booted from a snapshot. Use --force to override or disable this check in config.")
-			return fmt.Errorf("refusing to generate configs while booted from snapshot")
-		}
-	}
-
 	espPath, err := detectESPPath(cfg)
 	if err != nil {
 		return err
 	}
 
 	kernelScanner := buildKernelScanner(espPath, cfg.Kernel.BootImagePatterns)
-
-	// Root filesystem was already retrieved above
-
-	logEntry := log.Info().
-		Str("device", rootFS.Device).
-		Str("identifier", rootFS.GetBestIdentifier()).
-		Str("id_type", rootFS.GetIdentifierType())
-
-	if rootFS.Subvolume != nil {
-		logEntry.Str("subvolume", rootFS.Subvolume.Path)
-	} else {
-		logEntry.Str("subvolume", "<unknown>")
-	}
-
-	logEntry.Msg("Found root btrfs filesystem")
-
-	// Log current system's boot mode (what a snapshot taken right now would be)
-	logLiveBootMode(fstabManager, rootFS)
-
-	// Find snapshots
-	snapshots, err := btrfsManager.FindSnapshots(rootFS)
-	if err != nil {
-		return fmt.Errorf("failed to find snapshots: %w", err)
-	}
-
-	if len(snapshots) == 0 {
-		log.Info().Msg("No snapshots found")
-	}
-
-	// Select snapshots to use
-	selectionCount := cfg.Snapshot.SelectionCount
-	var selectedSnapshots []*btrfs.Snapshot
-
-	// Handle special values for "all snapshots"
-	if selectionCount <= 0 {
-		selectedSnapshots = snapshots
-	} else {
-		if selectionCount > len(snapshots) {
-			selectionCount = len(snapshots)
-		}
-		selectedSnapshots = snapshots[:selectionCount]
-	}
-
-	log.Info().
-		Int("total", len(snapshots)).
-		Int("selected", len(selectedSnapshots)).
-		Msg("Selected snapshots for processing")
-
-	// Process snapshots for writability
-	var processedSnapshots []*btrfs.Snapshot
-	writableMethod := cfg.Snapshot.WritableMethod
-
-	log.Info().Str("method", writableMethod).Msg("Using writable snapshot method")
-
-	if writableMethod == "toggle" {
-		// Toggle approach: change read-only flag on original snapshots
-		processedSnapshots = selectedSnapshots
-		for _, snapshot := range processedSnapshots {
-			if snapshot.IsReadOnly {
-				if err := btrfsManager.MakeSnapshotWritable(snapshot, r); err != nil {
-					log.Error().Err(err).Str("path", snapshot.Path).Msg("Failed to make snapshot writable")
-					continue
-				}
-			}
-		}
-
-		// Clean up writability: make unselected snapshots read-only
-		if cfg.Behavior.CleanupOldSnapshots {
-			if err := btrfsManager.CleanupSnapshotWritability(snapshots, selectedSnapshots, r); err != nil {
-				log.Warn().Err(err).Msg("Failed to cleanup snapshot writability")
-			}
-		}
-	} else if writableMethod == "copy" {
-		// Copy approach: create writable copies (legacy method)
-		destDir := cfg.Snapshot.DestinationDir
-
-		for _, snapshot := range selectedSnapshots {
-			if snapshot.IsReadOnly {
-				log.Info().
-					Str("source", snapshot.Path).
-					Msg("Creating writable snapshot")
-
-				writableSnapshot, err := btrfsManager.CreateWritableSnapshot(snapshot, destDir, r)
-				if err != nil {
-					log.Error().Err(err).Str("source", snapshot.Path).Msg("Failed to create writable snapshot")
-					continue
-				}
-				processedSnapshots = append(processedSnapshots, writableSnapshot)
-			} else {
-				processedSnapshots = append(processedSnapshots, snapshot)
-			}
-		}
-
-		// Clean up old snapshots for copy method
-		if cfg.Behavior.CleanupOldSnapshots {
-			if err := btrfsManager.CleanupOldSnapshots(destDir, selectionCount, r); err != nil {
-				log.Warn().Err(err).Msg("Failed to cleanup old snapshots")
-			}
-		}
-	} else {
-		return fmt.Errorf("invalid writable_method: %s (must be 'toggle' or 'copy')", writableMethod)
-	}
-
-	if len(processedSnapshots) == 0 {
-		log.Warn().Msg("No snapshots available for processing")
-	}
-
-	// Scan ESP for boot images and build boot sets
-	var bootSets []*kernel.BootSet
 	allImages := scanBootImages(espPath, kernelScanner)
-
+	var bootSets []*kernel.BootSet
 	if len(allImages) > 0 {
-		// Inspect kernel binaries for version info (best-effort)
 		kernelScanner.InspectAll(allImages)
-
-		// Group into boot sets
 		bootSets = kernelScanner.BuildBootSets(allImages)
-
 		log.Info().Int("boot_sets", len(bootSets)).Msg("Detected boot configurations on ESP")
 	} else {
 		log.Debug().Msg("No boot images found on ESP, staleness checking will be unavailable")
 	}
 
-	// Create boot plans for each snapshot (per-snapshot boot mode detection)
-	staleAction := kernel.ParseStaleAction(cfg.Kernel.StaleSnapshotAction)
-	var stalenessChecker *kernel.Checker
-	if len(bootSets) > 0 {
-		stalenessChecker = kernel.NewChecker(staleAction)
+	r := runner.New(cfg.DryRun)
+	pipeline := &generator.Pipeline{
+		Cfg:           cfg,
+		Btrfs:         btrfs.NewManager(cfg.Snapshot.SearchDirectories, cfg.Snapshot.MaxDepth, cfg.Advanced.Naming.RwsnapFormat, cfg.Display.LocalTime),
+		Fstab:         fstab.NewManager(),
+		Runner:        r,
+		ESPPath:       espPath,
+		KernelScanner: kernelScanner,
+		BootSets:      bootSets,
 	}
 
-	planner := kernel.NewPlanner(fstabManager, stalenessChecker, bootSets, rootFS)
-	allPlans := planner.Plan(processedSnapshots)
-
-	// Filter out snapshots where ALL plans have action=delete
-	var removedSnapshots []string
-	if staleAction == kernel.ActionDelete {
-		plansBySnapshot := kernel.GroupBySnapshot(allPlans)
-		var filteredSnapshots []*btrfs.Snapshot
-		for _, snapshot := range processedSnapshots {
-			plans := plansBySnapshot[snapshot.Path]
-			allSkip := len(plans) > 0
-			for _, p := range plans {
-				if !p.ShouldSkip() {
-					allSkip = false
-					break
-				}
-			}
-			if allSkip {
-				log.Info().Str("snapshot", snapshot.Path).Msg("Removing stale snapshot from generation (delete action)")
-				removedSnapshots = append(removedSnapshots, snapshot.Path)
-			} else {
-				filteredSnapshots = append(filteredSnapshots, snapshot)
-			}
-		}
-		processedSnapshots = filteredSnapshots
-
-		if len(processedSnapshots) == 0 {
-			log.Warn().Msg("All snapshots were stale and removed (stale_snapshot_action=delete)")
-		}
-
-		// Rebuild plans for the filtered snapshot list
-		allPlans = planner.Plan(processedSnapshots)
-	}
-
-	// Collect all changes in a unified patch
-	unifiedPatch := diff.NewPatchDiff()
-	operationSummary := &OperationSummary{
-		IncludedSnapshots: make([]string, 0),
-		AddedSnapshots:    make([]string, 0),
-		RemovedSnapshots:  removedSnapshots,
-		StaleSnapshots:    make([]string, 0),
-		UpdatedFstabs:     make([]string, 0),
-		UpdatedConfigs:    make([]string, 0),
-		WritableChanges:   make([]string, 0),
-	}
-
-	// Record stale snapshots in summary from boot plans
-	for _, plan := range allPlans {
-		if summary := plan.FormatStaleSummary(); summary != "" && plan.IsStale() {
-			operationSummary.StaleSnapshots = append(operationSummary.StaleSnapshots, summary)
-		}
-	}
-
-	// Update fstab files in snapshots
-	for _, snapshot := range processedSnapshots {
-		if fileDiff, err := fstabManager.UpdateSnapshotFstabDiff(snapshot, rootFS); err != nil {
-			log.Warn().Err(err).Str("snapshot", snapshot.Path).Msg("Failed to update snapshot fstab")
-		} else if fileDiff != nil {
-			unifiedPatch.AddFile(fileDiff)
-			operationSummary.UpdatedFstabs = append(operationSummary.UpdatedFstabs, snapshot.Path+"/etc/fstab")
-		}
-	}
-
-	// Parse rEFInd configuration
-	refindParser := refind.NewParserWithScanner(espPath, kernelScanner)
-
-	// Try to find rEFInd config automatically first
-	configPath := cfg.Refind.ConfigPath
-	if configPath == "/EFI/refind/refind.conf" { // Default value
-		// Try to auto-detect
-		if detectedPath, err := refindParser.FindRefindConfigPath(); err == nil {
-			configPath = detectedPath
-			log.Info().Str("path", configPath).Msg("Auto-detected rEFInd config")
-		} else {
-			// Fall back to configured path
-			if !filepath.IsAbs(configPath) {
-				configPath = filepath.Join(espPath, configPath)
-			}
-			log.Debug().Str("path", configPath).Msg("Using configured rEFInd config path")
-		}
-	} else {
-		// User specified a custom path
-		if !filepath.IsAbs(configPath) {
-			configPath = filepath.Join(espPath, configPath)
-		}
-		log.Info().Str("path", configPath).Msg("Using custom rEFInd config path")
-	}
-
-	config, err := refindParser.ParseConfig(configPath)
+	plan, err := pipeline.Discover()
 	if err != nil {
-		return fmt.Errorf("failed to parse rEFInd config: %w", err)
+		return err
 	}
 
-	// Find suitable menu entries for snapshot generation
-	var sourceEntries []*refind.MenuEntry
-	for _, entry := range config.Entries {
-		if refind.IsBootable(entry, rootFS) {
-			sourceEntries = append(sourceEntries, entry)
-		}
+	patch, summary, err := pipeline.BuildPatch(plan)
+	if err != nil {
+		return err
 	}
 
-	if len(sourceEntries) == 0 {
-		return fmt.Errorf("no suitable boot entries found in rEFInd config")
-	}
-
-	log.Info().
-		Int("total_entries", len(config.Entries)).
-		Int("valid_entries", len(sourceEntries)).
-		Msg("Checking valid entries")
-
-	// Generate snapshot configurations
-	generator := refind.NewGeneratorWithBootPlans(espPath, cfg.Advanced.Naming.MenuFormat, cfg.Display.LocalTime, kernelScanner, bootSets, allPlans)
-
-	// Separate entries by source type
-	var refindLinuxEntries []*refind.MenuEntry
-	var otherEntries []*refind.MenuEntry
-
-	for _, entry := range sourceEntries {
-		if entry.SourceFile != "" && strings.HasSuffix(entry.SourceFile, "refind_linux.conf") {
-			refindLinuxEntries = append(refindLinuxEntries, entry)
-		} else {
-			otherEntries = append(otherEntries, entry)
-		}
-	}
-
-	// Handle refind_linux.conf entries - group by file and update once per file
-	var updatedRefindLinuxConf bool
-	refindLinuxFiles := make(map[string][]*refind.MenuEntry)
-
-	// Group entries by their source file
-	rootSubvol := ""
-	if rootFS.Subvolume != nil {
-		rootSubvol = strings.TrimPrefix(rootFS.Subvolume.Path, "/")
-	}
-	for _, entry := range refindLinuxEntries {
-		// Only process original entries whose subvol matches the root filesystem (not our generated snapshot entries)
-		if entry.BootOptions != nil && entry.BootOptions.Subvol != "" {
-			entrySubvol := strings.TrimPrefix(entry.BootOptions.Subvol, "/")
-			if entrySubvol == rootSubvol {
-				refindLinuxFiles[entry.SourceFile] = append(refindLinuxFiles[entry.SourceFile], entry)
-			}
-		}
-	}
-
-	// Update each refind_linux.conf file once with all its matching entries
-	// Sort the file paths to ensure consistent processing order
-	var filePaths []string
-	for filePath := range refindLinuxFiles {
-		filePaths = append(filePaths, filePath)
-	}
-	sort.Strings(filePaths)
-
-	for _, filePath := range filePaths {
-		entries := refindLinuxFiles[filePath]
-		log.Info().
-			Str("source_file", filePath).
-			Int("entries", len(entries)).
-			Msg("Updating refind_linux.conf with snapshots")
-
-		if configDiff, err := generator.UpdateRefindLinuxConfWithAllEntries(processedSnapshots, entries, rootFS); err != nil {
-			log.Error().Err(err).Str("source_file", filePath).Msg("Failed to update refind_linux.conf")
-		} else if configDiff != nil {
-			unifiedPatch.AddFile(configDiff)
-			operationSummary.UpdatedConfigs = append(operationSummary.UpdatedConfigs, configDiff.Path)
-			updatedRefindLinuxConf = true
-
-			// Since we're adding configs, record that snapshots are being added
-			for _, snapshot := range processedSnapshots {
-				snapshotDisplayName := btrfs.FormatSnapshotTimeForMenu(snapshot.SnapshotTime, cfg.Advanced.Naming.MenuFormat, cfg.Display.LocalTime)
-				operationSummary.AddedSnapshots = append(operationSummary.AddedSnapshots, snapshotDisplayName)
-			}
-		}
-	}
-
-	// Create managed config file if:
-	// 1. We haven't updated any refind_linux.conf files AND we have other entries, OR
-	// 2. User explicitly requested include file generation with --generate-include
-	forceGenerateInclude := cfg.GenerateInclude
-	shouldGenerateInclude := (!updatedRefindLinuxConf && len(otherEntries) > 0 && len(processedSnapshots) > 0) || forceGenerateInclude
-
-	if shouldGenerateInclude {
-		managedConfigPath := refindParser.GetManagedConfigPath(configPath)
-
-		// If forced generation, use all suitable entries if no other entries exist
-		entriesToUse := otherEntries
-		if forceGenerateInclude && len(otherEntries) == 0 {
-			entriesToUse = sourceEntries
-		}
-
-		log.Info().
-			Int("entries", len(entriesToUse)).
-			Int("snapshots", len(processedSnapshots)).
-			Str("config_path", managedConfigPath).
-			Bool("forced", forceGenerateInclude).
-			Msg("Generating managed rEFInd config")
-
-		// Generate unified config with all entries and snapshots
-		if configDiff, err := generator.GenerateManagedConfigDiff(entriesToUse, processedSnapshots, rootFS, managedConfigPath); err != nil {
-			log.Error().Err(err).Msg("Failed to generate managed config")
-		} else if configDiff != nil {
-			unifiedPatch.AddFile(configDiff)
-			operationSummary.UpdatedConfigs = append(operationSummary.UpdatedConfigs, configDiff.Path)
-
-			// Since we're adding configs, record that snapshots are being added (avoid duplicates)
-			if len(operationSummary.AddedSnapshots) == 0 {
-				for _, snapshot := range processedSnapshots {
-					snapshotDisplayName := btrfs.FormatSnapshotTimeForMenu(snapshot.SnapshotTime, cfg.Advanced.Naming.MenuFormat, cfg.Display.LocalTime)
-					operationSummary.AddedSnapshots = append(operationSummary.AddedSnapshots, snapshotDisplayName)
-				}
-			}
-
-		}
-	} else if updatedRefindLinuxConf && len(otherEntries) > 0 {
-		log.Info().
-			Int("skipped_entries", len(otherEntries)).
-			Msg("Skipping managed config generation - refind_linux.conf files were updated for this root volume")
-	}
-
-	// Record included snapshots (all snapshots selected for this run)
-	for _, snapshot := range processedSnapshots {
-		snapshotDisplayName := btrfs.FormatSnapshotTimeForMenu(snapshot.SnapshotTime, cfg.Advanced.Naming.MenuFormat, cfg.Display.LocalTime)
-		operationSummary.IncludedSnapshots = append(operationSummary.IncludedSnapshots, snapshotDisplayName)
-	}
-
-	// AddedSnapshots will be populated when configs are actually updated
-
-	// Show unified diff and ask for confirmation
-	if len(unifiedPatch.Files) > 0 {
-		autoApprove := cfg.Yes
-		if r.IsDryRun() {
-			// Always show diff, allow pager only if not auto-approving
-			diff.ShowPatchWithPager(unifiedPatch, !autoApprove)
-			log.Info().Msg("[DRY RUN] Would apply all changes shown above")
-		} else {
-			if !autoApprove {
-				if !diff.ConfirmPatchChanges(unifiedPatch, false) {
-					log.Info().Msg("User declined changes - operation cancelled")
-					return nil
-				}
-			} else {
-				// Show diff without pager when auto-approving
-				diff.ShowPatchWithPager(unifiedPatch, false)
-				log.Info().Msg("Auto-approving all changes")
-			}
-
-			// Apply all changes
-			if err := diff.Apply(unifiedPatch, r); err != nil {
-				return fmt.Errorf("failed to apply changes: %w", err)
-			}
-		}
-	} else {
+	if len(patch.Files) == 0 {
 		log.Info().Msg("No changes needed - configurations are up to date")
+	} else if r.IsDryRun() {
+		diff.ShowPatchWithPager(patch, !cfg.Yes)
+		log.Info().Msg("[DRY RUN] Would apply all changes shown above")
+	} else {
+		if !cfg.Yes {
+			if !diff.ConfirmPatchChanges(patch, false) {
+				log.Info().Msg("User declined changes - operation cancelled")
+				return nil
+			}
+		} else {
+			diff.ShowPatchWithPager(patch, false)
+			log.Info().Msg("Auto-approving all changes")
+		}
+		if err := diff.Apply(patch, r); err != nil {
+			return fmt.Errorf("failed to apply changes: %w", err)
+		}
 	}
 
-	// Log comprehensive summary
-	logOperationSummary(operationSummary, r.IsDryRun())
-
+	generator.LogSummary(summary, r.IsDryRun())
 	if r.IsDryRun() {
 		log.Info().Msg("Dry run completed - no changes made")
 	} else {
 		log.Info().Msg("Successfully generated rEFInd snapshot configurations")
 	}
-
 	return nil
-}
-
-// OperationSummary tracks all operations performed during generation
-type OperationSummary struct {
-	IncludedSnapshots []string // All snapshots selected for this run
-	AddedSnapshots    []string // Snapshots actually added to configs (new ones)
-	RemovedSnapshots  []string // Snapshots removed from configs (due to cleanup/age)
-	StaleSnapshots    []string // Snapshots detected as stale
-	UpdatedFstabs     []string
-	UpdatedConfigs    []string
-	WritableChanges   []string
-}
-
-// logOperationSummary logs a comprehensive summary of all operations
-func logOperationSummary(summary *OperationSummary, isDryRun bool) {
-	prefix := ""
-	if isDryRun {
-		prefix = "[DRY RUN] "
-	}
-
-	logEntry := log.Info().
-		Strs("included_snapshots", summary.IncludedSnapshots).
-		Strs("added_snapshots", summary.AddedSnapshots).
-		Strs("removed_snapshots", summary.RemovedSnapshots).
-		Strs("stale_snapshots", summary.StaleSnapshots).
-		Strs("updated_fstabs", summary.UpdatedFstabs).
-		Strs("updated_configs", summary.UpdatedConfigs).
-		Strs("writable_changes", summary.WritableChanges)
-
-	logEntry.Msg(prefix + "Operation summary")
 }
 
 // checkRootPrivileges checks if the current user has root privileges
@@ -523,39 +138,8 @@ func checkRootPrivileges() error {
 	if err != nil {
 		return fmt.Errorf("failed to get current user: %w", err)
 	}
-
 	if currentUser.Uid != "0" {
 		return fmt.Errorf("not running as root (UID: %s)", currentUser.Uid)
 	}
-
 	return nil
 }
-
-// logLiveBootMode inspects the live system's /etc/fstab to determine
-// whether the currently running system has /boot embedded in btrfs or
-// on a separate partition. This tells the user what mode snapshots
-// taken right now would use.
-func logLiveBootMode(fstabMgr *fstab.Manager, rootFS *btrfs.Filesystem) {
-	liveFstab, err := fstabMgr.ParseFstab("/etc/fstab")
-	if err != nil {
-		log.Debug().Err(err).Msg("Could not parse live /etc/fstab for boot mode detection")
-		return
-	}
-
-	info := fstabMgr.AnalyzeBootMount(liveFstab, rootFS)
-
-	logEntry := log.Info()
-
-	if info.BootOnSameBtrfs {
-		logEntry.Str("boot_mode", "btrfs").
-			Msg("Live system has /boot inside btrfs (snapshots will contain their own kernels)")
-	} else {
-		logEntry.Str("boot_mode", "esp")
-		if info.Entry != nil {
-			logEntry.Str("boot_device", info.Entry.Device).
-				Str("boot_fstype", info.Entry.FSType)
-		}
-		logEntry.Msg("Live system has /boot on separate partition (snapshots depend on ESP kernels)")
-	}
-}
-
