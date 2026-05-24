@@ -59,6 +59,8 @@ tmp/
 temp/
 
 
+.aide/*
+!.aide/shared/
 .claude
 .cursor
 
