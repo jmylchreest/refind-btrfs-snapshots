@@ -1,4 +1,4 @@
-package integration
+package refind
 
 import (
 	"os"
@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
-	"github.com/jmylchreest/refind-btrfs-snapshots/internal/refind"
 )
 
 // TestComprehensiveMultiKernelMultiVolumeScenario tests a complex scenario with:
@@ -166,7 +165,7 @@ menuentry "Windows 11" {
 	}
 
 	// Parse configuration
-	parser := refind.NewParser(tempDir)
+	parser := NewParser(tempDir)
 	config, err := parser.ParseConfig(mainConfig)
 	if err != nil {
 		t.Fatalf("ParseConfig() error = %v", err)
@@ -331,7 +330,7 @@ type RefindLinuxConf struct {
 }
 
 // Helper function to log all entries for debugging
-func logAllEntries(t *testing.T, entries []*refind.MenuEntry) {
+func logAllEntries(t *testing.T, entries []*MenuEntry) {
 	t.Log("All parsed entries:")
 	for i, entry := range entries {
 		bootOpts := "none"
@@ -357,7 +356,7 @@ func TestBootableEntryDetectionWithMultipleVolumes(t *testing.T) {
 
 	testCases := []struct {
 		name     string
-		entry    *refind.MenuEntry
+		entry    *MenuEntry
 		expected bool
 		reason   string
 	}{
@@ -411,7 +410,7 @@ func TestBootableEntryDetectionWithMultipleVolumes(t *testing.T) {
 		},
 		{
 			name: "no_boot_options",
-			entry: &refind.MenuEntry{
+			entry: &MenuEntry{
 				Title:       "Test Entry",
 				BootOptions: nil,
 			},
@@ -446,16 +445,16 @@ func TestBootableEntryDetectionWithMultipleVolumes(t *testing.T) {
 }
 
 // Helper functions for testing
-func createTestEntry(title, options string) *refind.MenuEntry {
+func createTestEntry(title, options string) *MenuEntry {
 	// Use actual parseBootOptions from refind package
-	entry := &refind.MenuEntry{
+	entry := &MenuEntry{
 		Title:   title,
 		Options: options,
 	}
 
 	// Parse boot options (simplified version for testing)
 	if options != "" {
-		entry.BootOptions = &refind.BootOptions{}
+		entry.BootOptions = &BootOptions{}
 
 		// Extract root
 		if idx := strings.Index(options, "root="); idx != -1 {
@@ -526,7 +525,7 @@ func (m *mockFilesystem) GetSubvolume() *btrfs.Subvolume {
 	return &btrfs.Subvolume{Path: m.subvol}
 }
 
-func mockIsBootableEntry(entry *refind.MenuEntry, rootFS *mockFilesystem) bool {
+func mockIsBootableEntry(entry *MenuEntry, rootFS *mockFilesystem) bool {
 	if entry.BootOptions == nil {
 		return false
 	}

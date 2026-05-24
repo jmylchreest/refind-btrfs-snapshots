@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -140,31 +141,31 @@ func (d *ESPDetector) readMounts() (map[string]*Mount, error) {
 		return nil, err
 	}
 	defer file.Close()
+	return parseMounts(file)
+}
 
+// parseMounts decodes /proc/mounts content into a map keyed by short device
+// name (e.g. "sda1" → Mount{Device: "/dev/sda1", ...}). Only entries with a
+// /dev/ device path are kept; pseudo-filesystems (proc, sysfs, tmpfs, etc.)
+// are skipped.
+func parseMounts(r io.Reader) (map[string]*Mount, error) {
 	mounts := make(map[string]*Mount)
-	scanner := bufio.NewScanner(file)
-
+	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
 		if len(fields) < 3 {
 			continue
 		}
-
 		device := fields[0]
-		mountPoint := fields[1]
-		fsType := fields[2]
-
-		// Extract device name from path
-		deviceName := filepath.Base(device)
-		if strings.HasPrefix(device, "/dev/") {
-			mounts[deviceName] = &Mount{
-				Device:     device,
-				MountPoint: mountPoint,
-				FSType:     fsType,
-			}
+		if !strings.HasPrefix(device, "/dev/") {
+			continue
+		}
+		mounts[filepath.Base(device)] = &Mount{
+			Device:     device,
+			MountPoint: fields[1],
+			FSType:     fields[2],
 		}
 	}
-
 	return mounts, scanner.Err()
 }
 
@@ -175,14 +176,18 @@ func (d *ESPDetector) readPartitions() ([]*Partition, error) {
 		return nil, err
 	}
 	defer file.Close()
+	return parsePartitions(file)
+}
 
+// parsePartitions decodes /proc/partitions content. Skips lines until the
+// "major" header is seen, then parses subsequent rows of the form
+// "<major> <minor> <#blocks> <name>".
+func parsePartitions(r io.Reader) ([]*Partition, error) {
 	var partitions []*Partition
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(r)
 
-	// Skip header lines
 	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.Contains(line, "major") {
+		if strings.Contains(scanner.Text(), "major") {
 			break
 		}
 	}
@@ -192,17 +197,9 @@ func (d *ESPDetector) readPartitions() ([]*Partition, error) {
 		if len(fields) < 4 {
 			continue
 		}
-
-		// fields: major minor #blocks name
-		sizeBlocks := fields[2]
-		name := fields[3]
-
-		// Convert blocks to human readable size (assuming 1024 byte blocks)
-		size := sizeBlocks + " blocks"
-
 		partitions = append(partitions, &Partition{
-			Name: name,
-			Size: size,
+			Name: fields[3],
+			Size: fields[2] + " blocks",
 		})
 	}
 
