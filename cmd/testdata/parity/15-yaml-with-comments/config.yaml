@@ -1,0 +1,11 @@
+# Top-level comment
+
+snapshot:
+  # Comment in section
+  max_depth: 8  # inline comment
+  
+  search_directories:
+    - "/path1"   # one
+    - "/path2"   # two
+
+# Trailing comment

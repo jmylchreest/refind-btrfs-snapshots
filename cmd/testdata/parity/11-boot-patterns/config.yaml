@@ -1,0 +1,13 @@
+kernel:
+  stale_snapshot_action: "fallback"
+  boot_image_patterns:
+    - glob: "vmlinuz-*"
+      role: "kernel"
+      strip_prefix: "vmlinuz-"
+      strip_suffix: ""
+    - glob: "initramfs-*.img"
+      role: "initramfs"
+      strip_prefix: "initramfs-"
+      strip_suffix: ".img"
+    - glob: "intel-ucode.img"
+      role: "microcode"

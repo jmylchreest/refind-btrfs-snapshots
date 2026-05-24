@@ -1,0 +1,38 @@
+snapshot:
+  search_directories:
+    - "/custom/.snapshots"
+    - "/var/snapshots"
+  max_depth: 5
+  selection_count: 10
+  destination_dir: "/custom/dest"
+  writable_method: "copy"
+
+refind:
+  config_path: "/EFI/custom/refind.conf"
+
+esp:
+  uuid: "12345678-1234-1234-1234-123456789ABC"
+  auto_detect: false
+  mount_point: "/custom/esp"
+
+behavior:
+  exit_on_snapshot_boot: false
+  cleanup_old_snapshots: false
+
+kernel:
+  stale_snapshot_action: "warn"
+
+log_level: "debug"
+
+advanced:
+  naming:
+    rwsnap_format: "2006-01-02"
+    menu_format: "Mon Jan 2 15:04"
+
+display:
+  local_time: true
+
+list:
+  format: "json"
+  show_all: true
+  show_size: true
