@@ -91,21 +91,6 @@ func (p *ParameterParser) Remove(text, param string) string {
 	return strings.TrimSpace(pattern.ReplaceAllString(text, " "))
 }
 
-// ExtractAll extracts all parameter key-value pairs from the text
-func (p *ParameterParser) ExtractAll(text string) map[string]string {
-	params := make(map[string]string)
-	pattern := cachedRegexp(`(\w+)=([^` + p.separators + `]+)`)
-	matches := pattern.FindAllStringSubmatch(text, -1)
-
-	for _, match := range matches {
-		if len(match) >= 3 {
-			params[match[1]] = match[2]
-		}
-	}
-
-	return params
-}
-
 // ExtractMultiple extracts all values for a parameter that may appear multiple times
 func (p *ParameterParser) ExtractMultiple(text, param string) []string {
 	var values []string

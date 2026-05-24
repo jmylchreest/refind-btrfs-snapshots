@@ -274,140 +274,66 @@ default_selection 1`
 	}
 }
 
-func TestIsBootableEntry_WithDifferentDeviceTypes(t *testing.T) {
-	// This test would normally be in cmd package, but we'll create a simple version here
-	// to test the logic that determines which entries should be processed for snapshots
+func TestIsBootable_WithDifferentDeviceTypes(t *testing.T) {
+	makeRootFS := func(uuid, partuuid, label, subvol string) *btrfs.Filesystem {
+		fs := &btrfs.Filesystem{UUID: uuid, PartUUID: partuuid, Label: label}
+		if subvol != "" {
+			fs.Subvolume = &btrfs.Subvolume{Path: subvol}
+		}
+		return fs
+	}
 
 	testCases := []struct {
 		name     string
 		entry    *MenuEntry
-		rootFS   mockRootFS
+		rootFS   *btrfs.Filesystem
 		expected bool
 	}{
 		{
-			name: "matching UUID and subvolume",
-			entry: &MenuEntry{
-				BootOptions: &BootOptions{
-					Root:   "UUID=test-uuid",
-					Subvol: "@",
-				},
-			},
-			rootFS:   mockRootFS{uuid: "test-uuid", subvol: "@"},
+			name:     "matching UUID and subvolume",
+			entry:    &MenuEntry{BootOptions: &BootOptions{Root: "UUID=test-uuid", Subvol: "@"}},
+			rootFS:   makeRootFS("test-uuid", "", "", "@"),
 			expected: true,
 		},
 		{
-			name: "matching PARTUUID and subvolume",
-			entry: &MenuEntry{
-				BootOptions: &BootOptions{
-					Root:   "PARTUUID=test-partuuid",
-					Subvol: "@",
-				},
-			},
-			rootFS:   mockRootFS{partuuid: "test-partuuid", subvol: "@"},
+			name:     "matching PARTUUID and subvolume",
+			entry:    &MenuEntry{BootOptions: &BootOptions{Root: "PARTUUID=test-partuuid", Subvol: "@"}},
+			rootFS:   makeRootFS("", "test-partuuid", "", "@"),
 			expected: true,
 		},
 		{
-			name: "different UUID",
-			entry: &MenuEntry{
-				BootOptions: &BootOptions{
-					Root:   "UUID=different-uuid",
-					Subvol: "@",
-				},
-			},
-			rootFS:   mockRootFS{uuid: "test-uuid", subvol: "@"},
+			name:     "different UUID",
+			entry:    &MenuEntry{BootOptions: &BootOptions{Root: "UUID=different-uuid", Subvol: "@"}},
+			rootFS:   makeRootFS("test-uuid", "", "", "@"),
 			expected: false,
 		},
 		{
-			name: "different subvolume",
-			entry: &MenuEntry{
-				BootOptions: &BootOptions{
-					Root:   "UUID=test-uuid",
-					Subvol: "@alt",
-				},
-			},
-			rootFS:   mockRootFS{uuid: "test-uuid", subvol: "@"},
+			name:     "different subvolume",
+			entry:    &MenuEntry{BootOptions: &BootOptions{Root: "UUID=test-uuid", Subvol: "@alt"}},
+			rootFS:   makeRootFS("test-uuid", "", "", "@"),
 			expected: false,
 		},
 		{
-			name: "no boot options",
-			entry: &MenuEntry{
-				BootOptions: nil,
-			},
-			rootFS:   mockRootFS{uuid: "test-uuid", subvol: "@"},
+			name:     "no boot options",
+			entry:    &MenuEntry{BootOptions: nil},
+			rootFS:   makeRootFS("test-uuid", "", "", "@"),
 			expected: false,
 		},
 		{
-			name: "no root parameter",
-			entry: &MenuEntry{
-				BootOptions: &BootOptions{
-					Root:   "",
-					Subvol: "@",
-				},
-			},
-			rootFS:   mockRootFS{uuid: "test-uuid", subvol: "@"},
+			name:     "no root parameter",
+			entry:    &MenuEntry{BootOptions: &BootOptions{Root: "", Subvol: "@"}},
+			rootFS:   makeRootFS("test-uuid", "", "", "@"),
 			expected: false,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Simple mock implementation of the bootable entry check logic
-			result := isBootableEntryMock(tc.entry, &tc.rootFS)
-			if result != tc.expected {
-				t.Errorf("isBootableEntry() = %v, expected %v", result, tc.expected)
+			if got := IsBootable(tc.entry, tc.rootFS); got != tc.expected {
+				t.Errorf("IsBootable() = %v, expected %v", got, tc.expected)
 			}
 		})
 	}
-}
-
-// Mock types and functions for testing the bootable entry logic
-type mockRootFS struct {
-	uuid     string
-	partuuid string
-	label    string
-	subvol   string
-}
-
-func (m *mockRootFS) MatchesDevice(device string) bool {
-	if m.uuid != "" && device == "UUID="+m.uuid {
-		return true
-	}
-	if m.partuuid != "" && device == "PARTUUID="+m.partuuid {
-		return true
-	}
-	if m.label != "" && device == "LABEL="+m.label {
-		return true
-	}
-	return false
-}
-
-func (m *mockRootFS) GetSubvolume() string {
-	return m.subvol
-}
-
-func isBootableEntryMock(entry *MenuEntry, rootFS *mockRootFS) bool {
-	// Simplified version of the actual isBootableEntry logic
-	if entry.BootOptions == nil {
-		return false
-	}
-
-	if entry.BootOptions.Root == "" {
-		return false
-	}
-
-	if entry.BootOptions.Subvol == "" {
-		return false
-	}
-
-	if !rootFS.MatchesDevice(entry.BootOptions.Root) {
-		return false
-	}
-
-	if entry.BootOptions.Subvol != rootFS.GetSubvolume() {
-		return false
-	}
-
-	return true
 }
 
 func TestUpdateOptionsForSnapshot_SubvolumeFormatPreservation(t *testing.T) {

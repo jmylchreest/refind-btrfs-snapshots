@@ -414,29 +414,25 @@ func (f *Filesystem) MatchesDevice(device string) bool {
 
 // getRootSubvolume gets information about the root subvolume of a filesystem
 func (m *Manager) getRootSubvolume(mountpoint string) (*Subvolume, error) {
-	// Check if btrfs command is available
 	if _, err := exec.LookPath("btrfs"); err != nil {
 		return nil, fmt.Errorf("btrfs command not found: %w", err)
 	}
-
-	// Get the subvolume ID of the root subvolume
-	cmd := exec.Command("btrfs", "subvolume", "show", mountpoint)
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get subvolume info: %w", err)
-	}
-
-	return m.parseSubvolumeShow(string(output))
+	return m.runSubvolumeShow(mountpoint)
 }
 
 // getSubvolumeInfo gets detailed information about a subvolume
 func (m *Manager) getSubvolumeInfo(path string) (*Subvolume, error) {
-	cmd := exec.Command("btrfs", "subvolume", "show", path)
-	output, err := cmd.Output()
+	return m.runSubvolumeShow(path)
+}
+
+// runSubvolumeShow runs `btrfs subvolume show <path>` and parses the output.
+// Shared by getRootSubvolume and getSubvolumeInfo to avoid duplicating the
+// exec+parse pattern in two places.
+func (m *Manager) runSubvolumeShow(path string) (*Subvolume, error) {
+	output, err := exec.Command("btrfs", "subvolume", "show", path).Output()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get subvolume info: %w", err)
 	}
-
 	return m.parseSubvolumeShow(string(output))
 }
 

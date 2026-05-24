@@ -18,12 +18,10 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"os/user"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
@@ -319,7 +317,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	// Find suitable menu entries for snapshot generation
 	var sourceEntries []*refind.MenuEntry
 	for _, entry := range config.Entries {
-		if isBootableEntry(entry, rootFS) {
+		if refind.IsBootable(entry, rootFS) {
 			sourceEntries = append(sourceEntries, entry)
 		}
 	}
@@ -469,7 +467,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 			}
 
 			// Apply all changes
-			if err := applyAllChanges(unifiedPatch, r); err != nil {
+			if err := diff.Apply(unifiedPatch, r); err != nil {
 				return fmt.Errorf("failed to apply changes: %w", err)
 			}
 		}
@@ -519,113 +517,6 @@ func logOperationSummary(summary *OperationSummary, isDryRun bool) {
 	logEntry.Msg(prefix + "Operation summary")
 }
 
-// applyAllChanges applies all collected changes
-func applyAllChanges(patch *diff.PatchDiff, r runner.Runner) error {
-	var errs []error
-
-	// Apply all file changes from the patch (includes fstab diffs, config diffs, etc.)
-	for _, fileDiff := range patch.Files {
-		// Create directory if needed
-		if err := r.MkdirAll(filepath.Dir(fileDiff.Path), 0755, fmt.Sprintf("Create directory for %s", fileDiff.Path)); err != nil {
-			log.Warn().Err(err).Str("path", fileDiff.Path).Msg("Failed to create directory")
-			errs = append(errs, fmt.Errorf("mkdir %s: %w", filepath.Dir(fileDiff.Path), err))
-			continue
-		}
-
-		// Write the file
-		if err := r.WriteFile(fileDiff.Path, []byte(fileDiff.Modified), 0644, fmt.Sprintf("Write %s", fileDiff.Path)); err != nil {
-			log.Warn().Err(err).Str("path", fileDiff.Path).Msg("Failed to write file")
-			errs = append(errs, fmt.Errorf("write %s: %w", fileDiff.Path, err))
-			continue
-		}
-
-		// Log with file type for better categorization
-		fileType := getFileType(fileDiff.Path)
-		log.Info().Str("path", fileDiff.Path).Str("type", fileType).Msg("Successfully updated file")
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("failed to apply %d of %d changes: %w", len(errs), len(patch.Files), errors.Join(errs...))
-	}
-	return nil
-}
-
-// isBootableEntry determines if a menu entry is suitable for snapshot generation
-func isBootableEntry(entry *refind.MenuEntry, rootFS *btrfs.Filesystem) bool {
-	// Must have boot options
-	if entry.BootOptions == nil {
-		log.Trace().Str("title", entry.Title).Msg("Entry rejected: no boot options")
-		return false
-	}
-
-	// Must have root parameter
-	if entry.BootOptions.Root == "" {
-		log.Trace().Str("title", entry.Title).Msg("Entry rejected: no root parameter")
-		return false
-	}
-
-	// Must have subvol or subvolid in rootflags
-	if entry.BootOptions.Subvol == "" && entry.BootOptions.SubvolID == "" {
-		log.Trace().
-			Str("title", entry.Title).
-			Str("subvol", entry.BootOptions.Subvol).
-			Str("subvolid", entry.BootOptions.SubvolID).
-			Msg("Entry rejected: no subvol or subvolid")
-		return false
-	}
-
-	// Check if root parameter matches our filesystem using any available identifier
-	if !rootFS.MatchesDevice(entry.BootOptions.Root) {
-		log.Trace().
-			Str("title", entry.Title).
-			Str("entry_root", entry.BootOptions.Root).
-			Str("rootfs_device", rootFS.Device).
-			Str("rootfs_uuid", rootFS.UUID).
-			Msg("Entry rejected: device mismatch")
-		return false
-	}
-
-	// Also verify that the subvolume matches our root subvolume
-	if rootFS.Subvolume != nil {
-		// Check if subvol matches - normalize paths by removing leading slash for comparison
-		if entry.BootOptions.Subvol != "" {
-			entrySubvol := strings.TrimPrefix(entry.BootOptions.Subvol, "/")
-			rootFSSubvol := strings.TrimPrefix(rootFS.Subvolume.Path, "/")
-			if entrySubvol != rootFSSubvol {
-				log.Trace().
-					Str("title", entry.Title).
-					Str("entry_subvol", entry.BootOptions.Subvol).
-					Str("entry_subvol_normalized", entrySubvol).
-					Str("rootfs_subvol", rootFS.Subvolume.Path).
-					Str("rootfs_subvol_normalized", rootFSSubvol).
-					Msg("Entry rejected: subvol mismatch")
-				return false
-			}
-		}
-		// Check if subvolid matches
-		if entry.BootOptions.SubvolID != "" {
-			if subvolID, err := strconv.ParseUint(entry.BootOptions.SubvolID, 10, 64); err == nil {
-				if subvolID != rootFS.Subvolume.ID {
-					log.Trace().
-						Str("title", entry.Title).
-						Uint64("entry_subvolid", subvolID).
-						Uint64("rootfs_subvolid", rootFS.Subvolume.ID).
-						Msg("Entry rejected: subvolid mismatch")
-					return false
-				}
-			}
-		}
-	}
-
-	log.Debug().
-		Str("title", entry.Title).
-		Str("root", entry.BootOptions.Root).
-		Str("subvol", entry.BootOptions.Subvol).
-		Str("subvolid", entry.BootOptions.SubvolID).
-		Msg("Entry accepted as bootable")
-	return true
-}
-
 // checkRootPrivileges checks if the current user has root privileges
 func checkRootPrivileges() error {
 	currentUser, err := user.Current()
@@ -668,22 +559,3 @@ func logLiveBootMode(fstabMgr *fstab.Manager, rootFS *btrfs.Filesystem) {
 	}
 }
 
-// getFileType determines the type of file based on its path
-func getFileType(path string) string {
-	if strings.HasSuffix(path, "/etc/fstab") {
-		return "fstab"
-	}
-	if strings.HasSuffix(path, "refind.conf") {
-		return "refind_config"
-	}
-	if strings.HasSuffix(path, "refind_linux.conf") {
-		return "refind_linux"
-	}
-	if strings.HasSuffix(path, "refind-btrfs-snapshots.conf") {
-		return "refind_include"
-	}
-	if strings.Contains(path, "/EFI/") && strings.HasSuffix(path, ".conf") {
-		return "refind_config"
-	}
-	return "unknown"
-}
