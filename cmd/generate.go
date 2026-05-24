@@ -133,7 +133,6 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 
 	if len(snapshots) == 0 {
 		log.Info().Msg("No snapshots found")
-		return nil
 	}
 
 	// Select snapshots to use
@@ -212,7 +211,6 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 
 	if len(processedSnapshots) == 0 {
 		log.Warn().Msg("No snapshots available for processing")
-		return nil
 	}
 
 	// Scan ESP for boot images and build boot sets
@@ -266,7 +264,6 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 
 		if len(processedSnapshots) == 0 {
 			log.Warn().Msg("All snapshots were stale and removed (stale_snapshot_action=delete)")
-			return nil
 		}
 
 		// Rebuild plans for the filtered snapshot list
@@ -417,7 +414,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	// 1. We haven't updated any refind_linux.conf files AND we have other entries, OR
 	// 2. User explicitly requested include file generation with --generate-include
 	forceGenerateInclude := viper.GetBool("generate_include")
-	shouldGenerateInclude := (!updatedRefindLinuxConf && len(otherEntries) > 0) || forceGenerateInclude
+	shouldGenerateInclude := (!updatedRefindLinuxConf && len(otherEntries) > 0 && len(processedSnapshots) > 0) || forceGenerateInclude
 
 	if shouldGenerateInclude {
 		managedConfigPath := refindParser.GetManagedConfigPath(configPath)

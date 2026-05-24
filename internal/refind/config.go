@@ -506,9 +506,11 @@ func (g *Generator) getSnapshotDisplayName(snapshot *btrfs.Snapshot) string {
 	return btrfs.FormatSnapshotTimeForMenu(snapshot.SnapshotTime, viper.GetString("advanced.naming.menu_format"), viper.GetBool("display.local_time"))
 }
 
-// UpdateRefindLinuxConfWithAllEntries generates a diff for updating refind_linux.conf with all matching entries
+// UpdateRefindLinuxConfWithAllEntries generates a diff for updating refind_linux.conf with all matching entries.
+// When snapshots is empty, any previously generated marker section is cleaned up and the diff
+// reflects only that cleanup (no new entries are written).
 func (g *Generator) UpdateRefindLinuxConfWithAllEntries(snapshots []*btrfs.Snapshot, sourceEntries []*MenuEntry, rootFS *btrfs.Filesystem) (*diff.FileDiff, error) {
-	if len(snapshots) == 0 || len(sourceEntries) == 0 {
+	if len(sourceEntries) == 0 {
 		return nil, nil
 	}
 
@@ -612,8 +614,8 @@ func (g *Generator) generateRefindLinuxConfWithAllEntries(originalContent string
 		return "", err
 	}
 
-	// Add new snapshot entries for each source entry
-	if len(sourceEntries) > 0 {
+	// Skip markers entirely when there are no snapshots to avoid leaving an empty marker pair.
+	if len(sourceEntries) > 0 && len(snapshots) > 0 {
 		// Add marker section (only add empty line if we have content before)
 		if len(lines) > 0 && lines[len(lines)-1] != "" {
 			lines = append(lines, "")
@@ -658,10 +660,6 @@ func (g *Generator) isLegacyGeneratedSnapshotEntry(line string) bool {
 // GenerateManagedConfigDiff generates a single managed config file with proper menuentry/submenu structure
 func (g *Generator) GenerateManagedConfigDiff(sourceEntries []*MenuEntry, snapshots []*btrfs.Snapshot, rootFS *btrfs.Filesystem, configPath string) (*diff.FileDiff, error) {
 	log.Debug().Int("entries", len(sourceEntries)).Int("snapshots", len(snapshots)).Msg("Generating managed config")
-
-	if len(snapshots) == 0 {
-		return nil, nil
-	}
 
 	// Check for existing content to preserve user customizations
 	var originalContent string
