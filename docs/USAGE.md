@@ -9,6 +9,7 @@ Full documentation for `refind-btrfs-snapshots`. For installation and quick star
 - [Commands](#commands)
   - [generate](#generate)
   - [list](#list)
+  - [status](#status)
   - [version](#version)
 - [Configuration Reference](#configuration-reference)
   - [Configuration File Locations](#configuration-file-locations)
@@ -75,7 +76,7 @@ submenuentry "Arch Linux (2025-02-14T10:00:00Z)" {
 
 ### Mixed Mode
 
-A single rEFInd menu entry can contain both ESP-mode and btrfs-mode submenus. This happens naturally when a system transitions between boot configurations — older snapshots retain their original mode. The `list snapshots` and `list bootsets` commands show a `BOOT` column indicating each snapshot's detected mode.
+A single rEFInd menu entry can contain both ESP-mode and btrfs-mode submenus. This happens naturally when a system transitions between boot configurations — older snapshots retain their original mode. The `status` command shows a `BOOT` column indicating each snapshot's detected mode.
 
 > **Note:** Boot mode detection requires rEFInd's btrfs EFI driver (`btrfs_x64.efi`) to be installed for btrfs-mode entries to work. This driver is included with rEFInd and is typically loaded automatically.
 
@@ -119,7 +120,7 @@ sudo refind-btrfs-snapshots generate --force --dry-run
 
 ### `list`
 
-List btrfs volumes, snapshots, and boot sets.
+Inventory commands for btrfs volumes, snapshots, and the ESP. None of these compute kernel staleness — use [`status`](#status) for the snapshot↔bootset compatibility matrix.
 
 ```bash
 sudo refind-btrfs-snapshots list [command] [flags]
@@ -130,19 +131,27 @@ sudo refind-btrfs-snapshots list [command] [flags]
 | Subcommand | Description |
 |------------|-------------|
 | `volumes` | List all btrfs filesystems/volumes |
-| `snapshots` | List all snapshots for detected volumes |
+| `snapshots` | List all snapshots for detected volumes (no ESP scan; works offline) |
 | `bootsets` | List detected boot image sets on the ESP |
 
-**Flags (shared):**
+**Flags (`list volumes`):**
 
-| Flag | Short | Description |
-|------|-------|-------------|
-| `--all` | | Show all snapshots, including non-bootable ones |
-| `--format` | `-f` | Output format: `table`, `json`, `yaml` (default: `table`) |
-| `--search-dirs` | | Override snapshot search directories |
-| `--show-size` | | Calculate and show snapshot sizes (slower) |
+| Flag | Description |
+|------|-------------|
+| `--json` | Output in JSON format |
+| `--show-all-ids` | Show all device identifiers (UUID, PARTUUID, LABEL, etc.) |
 
-**Flags (bootsets only):**
+**Flags (`list snapshots`):**
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output in JSON format |
+| `--show-size` | Calculate and show snapshot sizes (slower) |
+| `--show-volume` | Show parent volume column (useful for multi-filesystem setups) |
+| `--volume <id>` | Show snapshots only for specific volume UUID or device |
+| `--search-dirs` | Override snapshot search directories |
+
+**Flags (`list bootsets`):**
 
 | Flag | Description |
 |------|-------------|
@@ -155,20 +164,50 @@ sudo refind-btrfs-snapshots list [command] [flags]
 # List all detected volumes
 sudo refind-btrfs-snapshots list volumes
 
-# List bootable snapshots in table format (includes BOOT mode column)
+# List snapshots
 sudo refind-btrfs-snapshots list snapshots
 
-# List all snapshots (including non-bootable) with sizes in JSON
-sudo refind-btrfs-snapshots list snapshots --all --show-size -f json
+# List snapshots with sizes and volume column
+sudo refind-btrfs-snapshots list snapshots --show-size --show-volume
 
-# Show detected boot sets with snapshot compatibility matrix
+# Snapshots for a specific volume in JSON
+sudo refind-btrfs-snapshots list snapshots --volume <uuid> --json
+
+# Show detected boot sets on the ESP
 sudo refind-btrfs-snapshots list bootsets
 
 # Show individual boot images alongside boot sets
 sudo refind-btrfs-snapshots list bootsets --show-images
+```
 
-# JSON output for scripting
-sudo refind-btrfs-snapshots list bootsets --json
+### `status`
+
+Show snapshot bootability against detected ESP boot sets. This is the diagnostic command for answering *"if my `/boot` breaks, which of my snapshots are real fallbacks?"* — it joins the snapshot inventory with the ESP boot images and renders a compatibility matrix.
+
+Each row is a snapshot; each kernel column shows whether the snapshot's modules match that kernel's version (`fresh`) or not (`stale`). Snapshots in btrfs-mode embed their own kernel and are marked `n/a` — staleness is impossible for them.
+
+```bash
+sudo refind-btrfs-snapshots status [flags]
+```
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output in JSON format |
+| `--unbootable-only` | Show only snapshots that are stale (or unbootable) against every detected boot set |
+
+**Examples:**
+
+```bash
+# Full compatibility matrix
+sudo refind-btrfs-snapshots status
+
+# Only show snapshots that can't boot from any current kernel
+sudo refind-btrfs-snapshots status --unbootable-only
+
+# Machine-readable output for scripting
+sudo refind-btrfs-snapshots status --json
 ```
 
 ### `version`
@@ -528,13 +567,19 @@ btrfs subvolume list /
 
 ### Stale Snapshot Entries
 
-If snapshots are marked stale or entries missing after a kernel upgrade:
+If snapshots are marked stale or entries missing after a kernel upgrade, start with `status` — it shows exactly which snapshots are bootable against the current ESP kernels:
 
 ```bash
-# Check boot images and their versions
+# See which snapshots are stale against the current kernel(s)
+sudo refind-btrfs-snapshots status
+
+# Drill down to just the unbootable ones
+sudo refind-btrfs-snapshots status --unbootable-only
+
+# Inspect the kernel binaries on the ESP
 sudo refind-btrfs-snapshots list bootsets --show-images
 
-# Debug staleness detection
+# Debug staleness detection during generation
 sudo refind-btrfs-snapshots generate --dry-run --log-level debug
 # Look for "stale" or "modules" messages in output
 ```
