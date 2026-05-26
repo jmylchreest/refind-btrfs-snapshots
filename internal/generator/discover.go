@@ -57,7 +57,8 @@ func (p *Pipeline) Discover() (*Plan, error) {
 	if len(p.BootSets) > 0 {
 		checker = kernel.NewChecker(staleAction)
 	}
-	planner := kernel.NewPlanner(p.Fstab, checker, p.BootSets, rootFS)
+	ukiStrategy := kernel.ParseUKIStrategy(p.Cfg.UKI.SnapshotStrategy)
+	planner := kernel.NewPlanner(p.Fstab, checker, p.BootSets, rootFS, ukiStrategy)
 	bootPlans := planner.Plan(processed)
 
 	var removed []string

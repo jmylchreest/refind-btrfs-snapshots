@@ -32,77 +32,99 @@ func NewScanner(espPath string, patterns []PatternConfig) *Scanner {
 	}
 }
 
-// ScanDir scans a directory for boot images matching the configured patterns.
-// Each file is tested against patterns in order; the first match wins.
-// Returns discovered images sorted by role (kernels first, then initramfs, fallback, microcode).
-func (s *Scanner) ScanDir(dir string) ([]*BootImage, error) {
-	log.Debug().Str("dir", dir).Msg("Scanning directory for boot images")
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
+// ScanDir scans one or more directories for boot images matching the
+// configured patterns. Each file is tested against patterns in order;
+// the first match wins.
+//
+// When multiple directories are supplied, results are aggregated. Directories
+// that cannot be read (missing, permission denied, etc.) are logged at trace
+// level and skipped rather than aborting the scan. An error is returned only
+// when every supplied directory failed to read.
+//
+// Returns discovered images sorted by role (kernels first, then UKI,
+// initramfs, fallback, microcode).
+func (s *Scanner) ScanDir(dirs ...string) ([]*BootImage, error) {
+	if len(dirs) == 0 {
+		return nil, nil
 	}
 
 	var images []*BootImage
+	var lastErr error
+	succeeded := 0
 
-	for _, entry := range entries {
-		if entry.IsDir() {
+	for _, dir := range dirs {
+		log.Debug().Str("dir", dir).Msg("Scanning directory for boot images")
+
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			log.Trace().Err(err).Str("dir", dir).Msg("Skipping unreadable directory")
+			lastErr = err
 			continue
 		}
+		succeeded++
 
-		filename := entry.Name()
-		matched := false
-
-		for _, pattern := range s.patterns {
-			ok, err := filepath.Match(pattern.Glob, filename)
-			if err != nil {
-				log.Warn().Err(err).Str("glob", pattern.Glob).Msg("Invalid glob pattern, skipping")
+		for _, entry := range entries {
+			if entry.IsDir() {
 				continue
 			}
 
-			if ok {
-				absPath := filepath.Join(dir, filename)
-				espRelPath := s.espRelativePath(absPath)
+			filename := entry.Name()
+			matched := false
 
-				kernelName := pattern.DeriveKernelName(filename)
+			for _, pattern := range s.patterns {
+				ok, err := filepath.Match(pattern.Glob, filename)
+				if err != nil {
+					log.Warn().Err(err).Str("glob", pattern.Glob).Msg("Invalid glob pattern, skipping")
+					continue
+				}
 
-				log.Trace().
-					Str("file", filename).
-					Str("glob", pattern.Glob).
-					Str("role", string(pattern.Role)).
-					Str("kernel_name", kernelName).
-					Msg("Boot image matched pattern")
+				if ok {
+					absPath := filepath.Join(dir, filename)
+					espRelPath := s.espRelativePath(absPath)
 
-				images = append(images, &BootImage{
-					Path:       espRelPath,
-					AbsPath:    absPath,
-					Filename:   filename,
-					Role:       pattern.Role,
-					KernelName: kernelName,
-				})
+					kernelName := pattern.DeriveKernelName(filename)
 
-				matched = true
-				break // first match wins
+					log.Trace().
+						Str("file", filename).
+						Str("glob", pattern.Glob).
+						Str("role", string(pattern.Role)).
+						Str("kernel_name", kernelName).
+						Msg("Boot image matched pattern")
+
+					images = append(images, &BootImage{
+						Path:       espRelPath,
+						AbsPath:    absPath,
+						Filename:   filename,
+						Role:       pattern.Role,
+						KernelName: kernelName,
+					})
+
+					matched = true
+					break
+				}
 			}
-		}
 
-		if !matched {
-			log.Trace().Str("file", filename).Msg("No pattern matched, skipping")
+			if !matched {
+				log.Trace().Str("file", filename).Msg("No pattern matched, skipping")
+			}
 		}
 	}
 
-	// Sort for deterministic output: kernels first, then initramfs, fallback, microcode
+	if succeeded == 0 && lastErr != nil {
+		return nil, lastErr
+	}
+
 	slices.SortFunc(images, func(a, b *BootImage) int {
 		return cmp.Compare(roleOrder[a.Role], roleOrder[b.Role])
 	})
 
-	// Log summary
 	counts := make(map[ImageRole]int)
 	for _, img := range images {
 		counts[img.Role]++
 	}
 	log.Info().
 		Int("kernels", counts[RoleKernel]).
+		Int("uki", counts[RoleUKI]).
 		Int("initramfs", counts[RoleInitramfs]).
 		Int("fallback", counts[RoleFallbackInitramfs]).
 		Int("microcode", counts[RoleMicrocode]).
@@ -119,44 +141,27 @@ func (s *Scanner) InspectAll(images []*BootImage) {
 	inspected := 0
 
 	for _, img := range images {
-		switch img.Role {
-		case RoleKernel:
-			meta, err := InspectKernel(img.AbsPath)
-			if err != nil {
-				log.Warn().Err(err).
-					Str("path", img.AbsPath).
-					Str("filename", img.Filename).
-					Msg("Could not inspect kernel binary, falling back to filename-only detection")
-			} else {
-				img.Inspected = meta
-				inspected++
-				log.Debug().
-					Str("filename", img.Filename).
-					Str("version", meta.Version).
-					Str("protocol", meta.BootProtocol).
-					Msg("Kernel binary inspected successfully")
-			}
-
-		case RoleInitramfs, RoleFallbackInitramfs:
-			meta, err := InspectInitramfs(img.AbsPath)
-			if err != nil {
-				log.Warn().Err(err).
-					Str("path", img.AbsPath).
-					Str("filename", img.Filename).
-					Msg("Could not inspect initramfs, falling back to filename-only detection")
-			} else {
-				img.Inspected = meta
-				inspected++
-				log.Debug().
-					Str("filename", img.Filename).
-					Str("compress_format", meta.CompressFormat).
-					Msg("Initramfs inspected successfully")
-			}
-
-		case RoleMicrocode:
-			// No binary inspection for microcode images
-			log.Trace().Str("filename", img.Filename).Msg("Skipping inspection for microcode image")
+		meta, err := Inspect(img.AbsPath, img.Role)
+		if err != nil {
+			log.Warn().Err(err).
+				Str("path", img.AbsPath).
+				Str("filename", img.Filename).
+				Str("role", string(img.Role)).
+				Msg("Could not inspect boot image, falling back to filename-only detection")
+			continue
 		}
+		if meta == nil {
+			log.Trace().Str("filename", img.Filename).Str("role", string(img.Role)).Msg("Skipping inspection for this role")
+			continue
+		}
+		img.Inspected = meta
+		inspected++
+		log.Debug().
+			Str("filename", img.Filename).
+			Str("role", string(img.Role)).
+			Str("version", meta.Version).
+			Str("format", meta.Format).
+			Msg("Boot image inspected successfully")
 	}
 
 	log.Info().
@@ -165,22 +170,29 @@ func (s *Scanner) InspectAll(images []*BootImage) {
 		Msg("Boot image inspection complete")
 }
 
-// BuildBootSets groups discovered images into BootSets by KernelName.
+// bootSetKey identifies a unique BootSet by kernel name and layout, so a
+// kernel that exists in multiple layouts (e.g. vmlinuz-X plus an X.efi UKI)
+// is reported as two distinct sets.
+type bootSetKey struct {
+	name   string
+	layout BootLayout
+}
+
+// BuildBootSets groups discovered images into BootSets keyed by (kernel name, layout).
 // Microcode images (which have no KernelName) are shared across all sets.
+// UKIs produce their own LayoutUKI set per kernel name.
 // Logs warnings for orphaned images (initramfs without kernel, etc.).
 func (s *Scanner) BuildBootSets(images []*BootImage) []*BootSet {
-	setMap := make(map[string]*BootSet)
+	setMap := make(map[bootSetKey]*BootSet)
 	var microcode []*BootImage
 
 	for _, img := range images {
-		// Microcode is shared across all boot sets
 		if img.Role == RoleMicrocode {
 			microcode = append(microcode, img)
 			log.Debug().Str("filename", img.Filename).Msg("Microcode image will be shared across all boot sets")
 			continue
 		}
 
-		// Skip images with no kernel name (shouldn't happen except microcode, but be safe)
 		if img.KernelName == "" {
 			log.Warn().
 				Str("filename", img.Filename).
@@ -189,10 +201,12 @@ func (s *Scanner) BuildBootSets(images []*BootImage) []*BootSet {
 			continue
 		}
 
-		bs, exists := setMap[img.KernelName]
+		layout := layoutForRole(img.Role)
+		key := bootSetKey{name: img.KernelName, layout: layout}
+		bs, exists := setMap[key]
 		if !exists {
-			bs = &BootSet{KernelName: img.KernelName}
-			setMap[img.KernelName] = bs
+			bs = &BootSet{KernelName: img.KernelName, Layout: layout}
+			setMap[key] = bs
 		}
 
 		switch img.Role {
@@ -226,32 +240,55 @@ func (s *Scanner) BuildBootSets(images []*BootImage) []*BootSet {
 			} else {
 				bs.Fallback = img
 			}
+		case RoleUKI:
+			if bs.UKI != nil {
+				log.Warn().
+					Str("kernel_name", img.KernelName).
+					Str("existing", bs.UKI.Filename).
+					Str("duplicate", img.Filename).
+					Msg("Duplicate UKI for same kernel name, keeping first")
+			} else {
+				bs.UKI = img
+			}
 		}
 	}
 
-	// Attach microcode to all boot sets and collect into sorted slice
-	var sets []*BootSet
-	// Sort by kernel name for deterministic output
-	var names []string
-	for name := range setMap {
-		names = append(names, name)
+	keys := make([]bootSetKey, 0, len(setMap))
+	for k := range setMap {
+		keys = append(keys, k)
 	}
-	slices.Sort(names)
+	slices.SortFunc(keys, func(a, b bootSetKey) int {
+		if c := cmp.Compare(a.name, b.name); c != 0 {
+			return c
+		}
+		return cmp.Compare(string(a.layout), string(b.layout))
+	})
 
-	for _, name := range names {
-		bs := setMap[name]
+	sets := make([]*BootSet, 0, len(keys))
+	for _, k := range keys {
+		bs := setMap[k]
 		bs.Microcode = microcode
 
-		// Log warnings for incomplete boot sets
-		if bs.Kernel == nil {
-			log.Warn().
-				Str("kernel_name", name).
-				Msg("Boot set has no kernel image (orphaned initramfs/fallback)")
-		}
-		if bs.Initramfs == nil && bs.Kernel != nil {
-			log.Warn().
-				Str("kernel_name", name).
-				Msg("Boot set has kernel but no initramfs")
+		switch bs.Layout {
+		case LayoutSplit, LayoutBLS:
+			if bs.Kernel == nil {
+				log.Warn().
+					Str("kernel_name", k.name).
+					Str("layout", string(bs.Layout)).
+					Msg("Boot set has no kernel image (orphaned initramfs/fallback)")
+			}
+			if bs.Initramfs == nil && bs.Kernel != nil {
+				log.Warn().
+					Str("kernel_name", k.name).
+					Str("layout", string(bs.Layout)).
+					Msg("Boot set has kernel but no initramfs")
+			}
+		case LayoutUKI:
+			if bs.UKI == nil {
+				log.Warn().
+					Str("kernel_name", k.name).
+					Msg("UKI boot set is missing its UKI image")
+			}
 		}
 
 		hasFallback := "no"
@@ -265,7 +302,8 @@ func (s *Scanner) BuildBootSets(images []*BootImage) []*BootSet {
 		}
 
 		log.Info().
-			Str("kernel_name", name).
+			Str("kernel_name", k.name).
+			Str("layout", string(bs.Layout)).
 			Str("version", version).
 			Str("has_fallback", hasFallback).
 			Int("microcode_count", len(bs.Microcode)).
@@ -275,6 +313,16 @@ func (s *Scanner) BuildBootSets(images []*BootImage) []*BootSet {
 	}
 
 	return sets
+}
+
+// layoutForRole maps an ImageRole to the BootLayout that role implies when
+// found on disk. Split and BLS share the same image roles; the BLS scanner
+// re-labels matching sets after parsing /loader/entries/*.conf.
+func layoutForRole(r ImageRole) BootLayout {
+	if r == RoleUKI {
+		return LayoutUKI
+	}
+	return LayoutSplit
 }
 
 // espRelativePath converts an absolute path to an ESP-relative path.

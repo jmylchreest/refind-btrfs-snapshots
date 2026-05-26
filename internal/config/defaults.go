@@ -27,6 +27,9 @@ func Defaults() Config {
 		Kernel: KernelConfig{
 			StaleSnapshotAction: "delete",
 		},
+		UKI: UKIConfig{
+			SnapshotStrategy: "skip",
+		},
 		Advanced: AdvancedConfig{
 			Naming: NamingConfig{
 				RwsnapFormat: "2006-01-02_15-04-05",

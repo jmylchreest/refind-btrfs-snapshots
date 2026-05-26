@@ -64,4 +64,5 @@ temp/
 .claude
 .cursor
 
-refind-btrfs-snapshots
+/refind-btrfs-snapshots
+/kernel-spy

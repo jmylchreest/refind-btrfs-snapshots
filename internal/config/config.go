@@ -12,6 +12,7 @@ type Config struct {
 	ESP      ESPConfig      `koanf:"esp"`
 	Behavior BehaviorConfig `koanf:"behavior"`
 	Kernel   KernelConfig   `koanf:"kernel"`
+	UKI      UKIConfig      `koanf:"uki"`
 	Display  DisplayConfig  `koanf:"display"`
 	Advanced AdvancedConfig `koanf:"advanced"`
 	List     ListConfig     `koanf:"list"`
@@ -64,6 +65,19 @@ type PatternConfig struct {
 
 type DisplayConfig struct {
 	LocalTime bool `koanf:"local_time"`
+}
+
+// UKIConfig controls handling of Unified Kernel Images.
+//
+// SnapshotStrategy decides what to do for ESP-mode UKI boot sets where the
+// UKI's embedded cmdline points at the live root and the systemd-stub
+// ignores boot-loader-supplied cmdline overrides. Btrfs-mode UKI snapshots
+// (UKI inside the snapshot's /boot) are unaffected.
+//
+// Valid values: "skip" (default), "warn", "disable". See docs/USAGE.md
+// section "UKI Snapshots: ESP-mode Caveat".
+type UKIConfig struct {
+	SnapshotStrategy string `koanf:"snapshot_strategy"`
 }
 
 type AdvancedConfig struct {

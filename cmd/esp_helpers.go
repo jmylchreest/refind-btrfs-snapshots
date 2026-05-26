@@ -16,67 +16,39 @@
 package cmd
 
 import (
-	"fmt"
-	"path/filepath"
 	"slices"
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/config"
-	"github.com/jmylchreest/refind-btrfs-snapshots/internal/esp"
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/discovery"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/kernel"
 	"github.com/rs/zerolog/log"
 )
 
+// espOptionsFromConfig translates the CLI config's ESP block into the
+// primitive options struct accepted by the discovery package.
+func espOptionsFromConfig(cfg *config.Config) discovery.ESPOptions {
+	return discovery.ESPOptions{
+		UUID:       cfg.ESP.UUID,
+		AutoDetect: cfg.ESP.AutoDetect,
+		MountPoint: cfg.ESP.MountPoint,
+	}
+}
+
 // detectESPPath resolves the ESP mount point from config (uuid > auto_detect > mount_point).
 func detectESPPath(cfg *config.Config) (string, error) {
-	espUUID := cfg.ESP.UUID
-	espDetector := esp.NewESPDetector(espUUID)
-
-	if espUUID != "" {
-		detectedESP, err := espDetector.FindESP()
-		if err != nil {
-			return "", fmt.Errorf("failed to find ESP by UUID %s: %w", espUUID, err)
-		}
-		if detectedESP.MountPoint == "" {
-			return "", fmt.Errorf("ESP with UUID %s is not mounted", espUUID)
-		}
-		log.Info().Str("path", detectedESP.MountPoint).Str("uuid", espUUID).Msg("Found ESP by UUID")
-		if err := espDetector.ValidateESPPath(detectedESP.MountPoint); err != nil {
-			return "", fmt.Errorf("ESP validation failed: %w", err)
-		}
-		return detectedESP.MountPoint, nil
-	}
-
-	if cfg.ESP.AutoDetect {
-		detectedESP, err := espDetector.FindESP()
-		if err != nil {
-			return "", fmt.Errorf("failed to detect ESP: %w", err)
-		}
-		if detectedESP.MountPoint == "" {
-			return "", fmt.Errorf("ESP is not mounted")
-		}
-		log.Info().Str("path", detectedESP.MountPoint).Msg("Auto-detected ESP path")
-		if err := espDetector.ValidateESPPath(detectedESP.MountPoint); err != nil {
-			return "", fmt.Errorf("ESP validation failed: %w", err)
-		}
-		return detectedESP.MountPoint, nil
-	}
-
-	if mp := cfg.ESP.MountPoint; mp != "" {
-		log.Info().Str("path", mp).Msg("Using configured ESP path")
-		detector := esp.NewESPDetector("")
-		if err := detector.ValidateESPPath(mp); err != nil {
-			return "", fmt.Errorf("ESP validation failed: %w", err)
-		}
-		return mp, nil
-	}
-
-	return "", fmt.Errorf("ESP path not configured and auto-detection disabled")
+	return discovery.ResolveESP(espOptionsFromConfig(cfg))
 }
 
 // buildKernelScanner creates a kernel.Scanner from config, using custom patterns
 // if configured or built-in defaults otherwise.
 func buildKernelScanner(espPath string, cfgPatterns []config.PatternConfig) *kernel.Scanner {
+	return kernel.NewScanner(espPath, kernelPatternsFromConfig(cfgPatterns))
+}
+
+// kernelPatternsFromConfig converts the CLI config's pattern list into
+// the kernel package's PatternConfig, dropping any entries with unknown roles.
+func kernelPatternsFromConfig(cfgPatterns []config.PatternConfig) []kernel.PatternConfig {
 	var patterns []kernel.PatternConfig
 	for _, p := range cfgPatterns {
 		role, err := kernel.ParseImageRole(p.Role)
@@ -92,54 +64,20 @@ func buildKernelScanner(espPath string, cfgPatterns []config.PatternConfig) *ker
 			KernelName:  p.KernelName,
 		})
 	}
-	return kernel.NewScanner(espPath, patterns)
+	return patterns
 }
 
 // scanBootImages discovers all boot images across standard ESP directories.
 func scanBootImages(espPath string, scanner *kernel.Scanner) []*kernel.BootImage {
-	searchDirs := []string{
-		filepath.Join(espPath, "boot"),
-		filepath.Join(espPath, "EFI", "Linux"),
-		espPath,
-	}
-
-	var allImages []*kernel.BootImage
-	for _, searchDir := range searchDirs {
-		images, err := scanner.ScanDir(searchDir)
-		if err != nil {
-			log.Trace().Err(err).Str("dir", searchDir).Msg("No boot images found in directory")
-			continue
-		}
-		if len(images) > 0 {
-			allImages = append(allImages, images...)
-			log.Debug().Str("dir", searchDir).Int("count", len(images)).Msg("Found boot images")
-		}
-	}
-	return allImages
+	return discovery.ScanBootImages(scanner, espPath)
 }
 
 // detectBootSets is a convenience that detects the ESP, scans for boot images,
 // inspects kernels, and returns assembled boot sets. Returns nil on any error
 // (ESP not found, no images, etc.) so callers can gracefully degrade.
 func detectBootSets(cfg *config.Config) []*kernel.BootSet {
-	espPath, err := detectESPPath(cfg)
-	if err != nil {
-		log.Debug().Err(err).Msg("Could not detect ESP for boot set discovery")
-		return nil
-	}
-
-	scanner := buildKernelScanner(espPath, cfg.Kernel.BootImagePatterns)
-	allImages := scanBootImages(espPath, scanner)
-	if len(allImages) == 0 {
-		log.Debug().Msg("No boot images found on ESP")
-		return nil
-	}
-
-	scanner.InspectAll(allImages)
-	bootSets := scanner.BuildBootSets(allImages)
-
-	log.Info().Int("boot_sets", len(bootSets)).Str("esp", espPath).Msg("Detected boot configurations on ESP")
-	return bootSets
+	sets, _ := discovery.DetectBootSets(espOptionsFromConfig(cfg), kernelPatternsFromConfig(cfg.Kernel.BootImagePatterns))
+	return sets
 }
 
 // discoverSnapshots detects btrfs filesystems, finds snapshots, deduplicates,

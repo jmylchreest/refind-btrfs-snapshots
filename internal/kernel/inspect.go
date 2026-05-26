@@ -86,6 +86,7 @@ func InspectKernel(path string) (*InspectedMetadata, error) {
 	}
 
 	meta := &InspectedMetadata{
+		Format:       "bzimage",
 		BootProtocol: fmt.Sprintf("%d.%02d", protoVersion>>8, protoVersion&0xff),
 	}
 
@@ -175,7 +176,7 @@ func InspectInitramfs(path string) (*InspectedMetadata, error) {
 
 	// Check the first bytes for direct compression format
 	if format := matchCompression(buf); format != "" && format != "cpio" {
-		return &InspectedMetadata{CompressFormat: format}, nil
+		return &InspectedMetadata{Format: "initramfs", CompressFormat: format}, nil
 	}
 
 	// If it starts with CPIO (uncompressed), scan ahead for compressed payload.
@@ -184,14 +185,14 @@ func InspectInitramfs(path string) (*InspectedMetadata, error) {
 	if len(buf) >= 4 && string(buf[:4]) == "0707" {
 		for offset := 1; offset < len(buf)-6; offset++ {
 			if format := matchCompression(buf[offset:]); format != "" && format != "cpio" {
-				return &InspectedMetadata{CompressFormat: format}, nil
+				return &InspectedMetadata{Format: "initramfs", CompressFormat: format}, nil
 			}
 		}
 		// Only found CPIO, no compressed payload in our scan window
-		return &InspectedMetadata{CompressFormat: "cpio"}, nil
+		return &InspectedMetadata{Format: "initramfs", CompressFormat: "cpio"}, nil
 	}
 
-	return &InspectedMetadata{CompressFormat: "unknown"}, nil
+	return &InspectedMetadata{Format: "initramfs", CompressFormat: "unknown"}, nil
 }
 
 // matchCompression checks if the given bytes start with a known compression magic.

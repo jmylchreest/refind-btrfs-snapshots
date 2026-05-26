@@ -80,5 +80,13 @@ func DefaultPatterns() []PatternConfig {
 			Glob: "amd-ucode.img",
 			Role: RoleMicrocode,
 		},
+
+		// Unified Kernel Images (PE/EFI binaries, typically under /EFI/Linux/).
+		// See https://uapi-group.org/specifications/specs/boot_loader_specification/
+		{
+			Glob:        "*.efi",
+			Role:        RoleUKI,
+			StripSuffix: ".efi",
+		},
 	}
 }

@@ -183,7 +183,7 @@ func TestPlanner_BtrfsMode(t *testing.T) {
 	})
 
 	rootFS := testRootFS()
-	planner := NewPlanner(fstab.NewManager(), nil, nil, rootFS)
+	planner := NewPlanner(fstab.NewManager(), nil, nil, rootFS, UKIStrategySkip)
 	plans := planner.Plan([]*btrfs.Snapshot{snapshot})
 
 	require.Len(t, plans, 1)
@@ -212,7 +212,7 @@ UUID=AAAA-BBBB /boot vfat defaults 0 2
 	rootFS := testRootFS()
 	bs := testBootSet("linux-cachyos", "6.19.0-2-cachyos")
 	checker := NewChecker(ActionWarn)
-	planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs}, rootFS)
+	planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs}, rootFS, UKIStrategySkip)
 	plans := planner.Plan([]*btrfs.Snapshot{snapshot})
 
 	require.Len(t, plans, 1)
@@ -237,7 +237,7 @@ UUID=AAAA-BBBB /boot vfat defaults 0 2
 	rootFS := testRootFS()
 	bs := testBootSet("linux-cachyos", "6.19.0-2-cachyos")
 	checker := NewChecker(ActionDelete)
-	planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs}, rootFS)
+	planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs}, rootFS, UKIStrategySkip)
 	plans := planner.Plan([]*btrfs.Snapshot{snapshot})
 
 	require.Len(t, plans, 1)
@@ -269,7 +269,7 @@ UUID=AAAA-BBBB /boot vfat defaults 0 2
 	rootFS := testRootFS()
 	bs := testBootSet("linux-cachyos", "6.19.0-2-cachyos")
 	checker := NewChecker(ActionWarn)
-	planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs}, rootFS)
+	planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs}, rootFS, UKIStrategySkip)
 	plans := planner.Plan([]*btrfs.Snapshot{snapshot1, snapshot2})
 
 	// Should have plans for both snapshots: 1 btrfs-mode, 1 ESP-mode
@@ -290,7 +290,7 @@ func TestPlanner_BtrfsMode_FallbackToESP(t *testing.T) {
 	rootFS := testRootFS()
 	bs := testBootSet("linux-cachyos", "6.19.0-2-cachyos")
 	checker := NewChecker(ActionWarn)
-	planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs}, rootFS)
+	planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs}, rootFS, UKIStrategySkip)
 	plans := planner.Plan([]*btrfs.Snapshot{snapshot})
 
 	// Should fall back to ESP mode since no kernels in snapshot
@@ -304,7 +304,7 @@ func TestPlanner_NoFstab(t *testing.T) {
 	// NOT creating fstab — should default to ESP mode
 
 	rootFS := testRootFS()
-	planner := NewPlanner(fstab.NewManager(), nil, nil, rootFS)
+	planner := NewPlanner(fstab.NewManager(), nil, nil, rootFS, UKIStrategySkip)
 	plans := planner.Plan([]*btrfs.Snapshot{snapshot})
 
 	require.Len(t, plans, 1)
@@ -346,7 +346,7 @@ func TestPlanner_BtrfsMode_VolumeIdentifier(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			planner := NewPlanner(fstab.NewManager(), nil, nil, tt.rootFS)
+			planner := NewPlanner(fstab.NewManager(), nil, nil, tt.rootFS, UKIStrategySkip)
 			assert.Equal(t, tt.expected, planner.buildBtrfsVolume())
 		})
 	}
@@ -368,7 +368,7 @@ func TestPlanner_BtrfsMode_MultipleKernels(t *testing.T) {
 	})
 
 	rootFS := testRootFS()
-	planner := NewPlanner(fstab.NewManager(), nil, nil, rootFS)
+	planner := NewPlanner(fstab.NewManager(), nil, nil, rootFS, UKIStrategySkip)
 	plans := planner.Plan([]*btrfs.Snapshot{snapshot})
 
 	// Should have one plan per kernel found
@@ -392,7 +392,7 @@ UUID=AAAA-BBBB /boot vfat defaults 0 2
 	bs1 := testBootSet("linux-cachyos", "6.19.0-2-cachyos")
 	bs2 := testBootSet("linux-lts", "6.6.78-1-lts")
 	checker := NewChecker(ActionWarn)
-	planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs1, bs2}, rootFS)
+	planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs1, bs2}, rootFS, UKIStrategySkip)
 	plans := planner.Plan([]*btrfs.Snapshot{snapshot})
 
 	// One plan per boot set
@@ -491,7 +491,7 @@ UUID=AAAA-BBBB /boot vfat defaults 0 2
 		snapshots = append(snapshots, snap)
 	}
 
-	planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs}, rootFS)
+	planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs}, rootFS, UKIStrategySkip)
 	plans := planner.Plan(snapshots)
 
 	// All should be ESP mode
@@ -540,7 +540,7 @@ UUID=AAAA-BBBB /boot vfat defaults 0 2
 			rootFS := testRootFS()
 			bs := testBootSet("linux-cachyos", "6.19.0-2-cachyos")
 			checker := NewChecker(tt.action)
-			planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs}, rootFS)
+			planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs}, rootFS, UKIStrategySkip)
 			plans := planner.Plan([]*btrfs.Snapshot{snap})
 
 			require.Len(t, plans, 1)
@@ -573,7 +573,7 @@ UUID=AAAA-BBBB /boot vfat defaults 0 2
 	}
 
 	checker := NewChecker(ActionFallback)
-	planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs}, rootFS)
+	planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs}, rootFS, UKIStrategySkip)
 	plans := planner.Plan([]*btrfs.Snapshot{snap})
 
 	require.Len(t, plans, 1)
@@ -601,7 +601,7 @@ UUID=AAAA-BBBB /boot vfat defaults 0 2
 	// Explicitly: no bs.Fallback set (nil)
 
 	checker := NewChecker(ActionFallback) // configured for fallback, but no image exists
-	planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs}, rootFS)
+	planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs}, rootFS, UKIStrategySkip)
 	plans := planner.Plan([]*btrfs.Snapshot{snap})
 
 	require.Len(t, plans, 1)
@@ -640,7 +640,7 @@ UUID=AAAA-BBBB /boot vfat defaults 0 2
 		"initramfs-linux-cachyos.img",
 	})
 
-	planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs}, rootFS)
+	planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs}, rootFS, UKIStrategySkip)
 	plans := planner.Plan([]*btrfs.Snapshot{snapOld, snapNew})
 
 	require.Len(t, plans, 2)
@@ -684,7 +684,7 @@ UUID=AAAA-BBBB /boot vfat defaults 0 2
 `)
 	setupSnapshotModules(t, tmpNew, []string{"6.19.0-2-cachyos"})
 
-	planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs}, rootFS)
+	planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs}, rootFS, UKIStrategySkip)
 	plans := planner.Plan([]*btrfs.Snapshot{snapOld, snapNew})
 
 	require.Len(t, plans, 2)
@@ -720,7 +720,7 @@ func TestPlanner_BtrfsMode_NeverStaleRegardlessOfModules(t *testing.T) {
 	rootFS := testRootFS()
 	bs := testBootSet("linux-cachyos", "6.19.0-2-cachyos")
 	checker := NewChecker(ActionDelete) // harshest action
-	planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs}, rootFS)
+	planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs}, rootFS, UKIStrategySkip)
 	plans := planner.Plan([]*btrfs.Snapshot{snap})
 
 	require.Len(t, plans, 1)
@@ -741,7 +741,7 @@ UUID=AAAA-BBBB /boot vfat defaults 0 2
 `)
 
 	rootFS := testRootFS()
-	planner := NewPlanner(fstab.NewManager(), nil, nil, rootFS) // no boot sets
+	planner := NewPlanner(fstab.NewManager(), nil, nil, rootFS, UKIStrategySkip) // no boot sets
 	plans := planner.Plan([]*btrfs.Snapshot{snap})
 
 	require.Len(t, plans, 1)
@@ -790,7 +790,7 @@ UUID=AAAA-BBBB /boot vfat defaults 0 2
 		snapshots = append(snapshots, snap)
 	}
 
-	planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs}, rootFS)
+	planner := NewPlanner(fstab.NewManager(), checker, []*BootSet{bs}, rootFS, UKIStrategySkip)
 	plans := planner.Plan(snapshots)
 
 	require.Len(t, plans, 80)

@@ -113,6 +113,17 @@ Only for ESP-mode snapshots. `refind_linux.conf` relies on rEFInd's auto-detecte
 
 Yes. If your system transitioned between boot configurations over time, older snapshots retain their original mode. Each snapshot's own `/etc/fstab` determines its mode independently.
 
+**Q: I use Unified Kernel Images (UKIs). Are they supported?**
+
+Yes — UKIs (BLS Type #2) are discovered and inspected automatically. Behaviour depends on where the UKI lives:
+
+- **Inside the snapshot's `/boot/EFI/Linux/`** (btrfs mode): fully supported. Each snapshot's UKI has its own embedded cmdline pointing at that snapshot.
+- **On the ESP** (`<esp>/EFI/Linux/`): the UKI's embedded cmdline points at the *live* root, and the systemd-stub ignores boot-loader-supplied cmdline on standard UKIs — so a snapshot boot entry would actually boot live root. By default we **skip** these (`uki.snapshot_strategy: skip`). Set to `warn` or `disable` if you'd rather see them in the menu. See [Boot Layouts](docs/USAGE.md#boot-layouts) for the full explanation.
+
+**Q: I use systemd-boot's BLS `.conf` files. Do they affect anything?**
+
+We discover and parse `/loader/entries/*.conf` for diagnostics (visible in `kernel-spy`), but rEFInd itself does not read BLS `.conf` files. For rEFInd output, BLS-tagged boot sets are generated with the same shape as Split sets (loose kernel/initrd references). Native systemd-boot output is planned — see [Future Bootloader Support](docs/USAGE.md#future-bootloader-support).
+
 ## Links
 
 - [Usage Guide](docs/USAGE.md) — full documentation

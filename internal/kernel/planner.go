@@ -36,7 +36,15 @@ type BootPlan struct {
 	// Mode is the detected boot mode for this snapshot.
 	Mode BootMode
 
-	// --- ESP-mode fields (populated when Mode == BootModeESP) ---
+	// Layout describes the on-disk arrangement of this plan's kernel
+	// (split kernel+initrd vs UKI, etc.). Generator branches on this
+	// to emit the right submenu shape (UKIs have no initrd/options).
+	Layout BootLayout
+
+	// Disabled is true when the plan should be emitted with rEFInd's
+	// 'disabled' directive — visible in the menu but unbootable. Currently
+	// set when UKIStrategy=disable for an ESP-mode UKI plan.
+	Disabled bool
 
 	// BootSet is the ESP boot set matched to this snapshot.
 	// Nil for btrfs-mode snapshots.
@@ -46,14 +54,15 @@ type BootPlan struct {
 	// Nil for btrfs-mode snapshots.
 	Staleness *StalenessResult
 
-	// --- Btrfs-mode fields (populated when Mode == BootModeBtrfs) ---
-
 	// SnapshotKernel is the snapshot-relative path to the kernel image.
+	// For LayoutSplit/LayoutBLS, points at vmlinuz. For LayoutUKI, points
+	// at the .efi file inside the snapshot.
 	// e.g., "/@/.snapshots/73/snapshot/boot/vmlinuz-linux"
+	//       "/@/.snapshots/73/snapshot/boot/EFI/Linux/linux.efi"
 	SnapshotKernel string
 
 	// SnapshotInitrds are the snapshot-relative paths to initramfs images.
-	// e.g., ["/@/.snapshots/73/snapshot/boot/initramfs-linux.img"]
+	// Empty for LayoutUKI (initramfs is embedded in the UKI).
 	SnapshotInitrds []string
 
 	// BtrfsVolume is the identifier for the btrfs partition to use in
@@ -86,6 +95,7 @@ type Planner struct {
 	checker      *Checker
 	bootSets     []*BootSet
 	rootFS       *btrfs.Filesystem
+	ukiStrategy  UKIStrategy
 }
 
 // NewPlanner creates a Planner.
@@ -95,12 +105,14 @@ type Planner struct {
 //   - checker: staleness checker for ESP-mode snapshots (may be nil if no boot sets)
 //   - bootSets: detected ESP boot sets (may be empty)
 //   - rootFS: the root btrfs filesystem (used to determine if /boot is on the same device)
-func NewPlanner(fstabMgr *fstab.Manager, checker *Checker, bootSets []*BootSet, rootFS *btrfs.Filesystem) *Planner {
+//   - ukiStrategy: how to handle ESP-mode UKI boot sets (skip/warn/disable)
+func NewPlanner(fstabMgr *fstab.Manager, checker *Checker, bootSets []*BootSet, rootFS *btrfs.Filesystem, ukiStrategy UKIStrategy) *Planner {
 	return &Planner{
 		fstabManager: fstabMgr,
 		checker:      checker,
 		bootSets:     bootSets,
 		rootFS:       rootFS,
+		ukiStrategy:  ukiStrategy,
 	}
 }
 
@@ -164,7 +176,6 @@ func (p *Planner) analyzeSnapshotBoot(snapshot *btrfs.Snapshot) *fstab.BootMount
 // planBtrfsMode creates BootPlans for a snapshot whose /boot is part of the
 // btrfs filesystem. It scans for kernel images inside the snapshot.
 func (p *Planner) planBtrfsMode(snapshot *btrfs.Snapshot) []*BootPlan {
-	// Look for kernel images inside the snapshot's /boot directory
 	bootDir := filepath.Join(snapshot.FilesystemPath, "boot")
 	kernelImages := findKernelImages(bootDir)
 
@@ -173,26 +184,18 @@ func (p *Planner) planBtrfsMode(snapshot *btrfs.Snapshot) []*BootPlan {
 			Str("snapshot", snapshot.Path).
 			Str("boot_dir", bootDir).
 			Msg("Btrfs-mode snapshot has no kernel images in /boot, falling back to ESP mode")
-		// Fall back to ESP mode — snapshot claims /boot is local but
-		// no kernels were found (possibly deleted or not yet installed)
 		return p.planESPMode(snapshot)
 	}
 
-	// Build volume identifier for rEFInd's volume directive
 	btrfsVolume := p.buildBtrfsVolume()
+	snapshotSubvolPath := snapshot.Path
+	if !strings.HasPrefix(snapshotSubvolPath, "/") {
+		snapshotSubvolPath = "/" + snapshotSubvolPath
+	}
 
 	var plans []*BootPlan
 	for _, ki := range kernelImages {
-		// Build snapshot-subvolume-relative paths for rEFInd
-		// rEFInd's btrfs driver sees the filesystem from the root,
-		// so paths are like /@/.snapshots/73/snapshot/boot/vmlinuz-linux
-		snapshotSubvolPath := snapshot.Path
-		if !strings.HasPrefix(snapshotSubvolPath, "/") {
-			snapshotSubvolPath = "/" + snapshotSubvolPath
-		}
-
-		loaderPath := filepath.Join(snapshotSubvolPath, "boot", ki.kernelFilename)
-		// Normalize to forward slashes for rEFInd
+		loaderPath := filepath.Join(snapshotSubvolPath, ki.kernelRelPath)
 		loaderPath = "/" + strings.TrimPrefix(filepath.ToSlash(loaderPath), "/")
 
 		var initrdPaths []string
@@ -205,6 +208,7 @@ func (p *Planner) planBtrfsMode(snapshot *btrfs.Snapshot) []*BootPlan {
 		plan := &BootPlan{
 			Snapshot:        snapshot,
 			Mode:            BootModeBtrfs,
+			Layout:          ki.layout,
 			SnapshotKernel:  loaderPath,
 			SnapshotInitrds: initrdPaths,
 			BtrfsVolume:     btrfsVolume,
@@ -212,6 +216,7 @@ func (p *Planner) planBtrfsMode(snapshot *btrfs.Snapshot) []*BootPlan {
 
 		log.Debug().
 			Str("snapshot", snapshot.Path).
+			Str("layout", string(ki.layout)).
 			Str("kernel", loaderPath).
 			Strs("initrds", initrdPaths).
 			Str("volume", btrfsVolume).
@@ -239,6 +244,14 @@ func (p *Planner) planESPMode(snapshot *btrfs.Snapshot) []*BootPlan {
 
 	var plans []*BootPlan
 	for _, bs := range p.bootSets {
+		if bs.Layout == LayoutUKI {
+			plan := p.planESPModeUKI(snapshot, bs)
+			if plan != nil {
+				plans = append(plans, plan)
+			}
+			continue
+		}
+
 		var staleness *StalenessResult
 		if p.checker != nil {
 			staleness = p.checker.CheckSnapshot(snapshot.FilesystemPath, bs)
@@ -263,12 +276,54 @@ func (p *Planner) planESPMode(snapshot *btrfs.Snapshot) []*BootPlan {
 		plans = append(plans, &BootPlan{
 			Snapshot:  snapshot,
 			Mode:      BootModeESP,
+			Layout:    bs.Layout,
 			BootSet:   bs,
 			Staleness: staleness,
 		})
 	}
 
 	return plans
+}
+
+// planESPModeUKI applies the UKI strategy to an ESP-mode UKI boot set.
+// Returns nil when the strategy is "skip" (no plan emitted for this snapshot+set).
+// The systemd-stub ignores boot-loader-supplied cmdline on standard UKIs, so
+// an ESP-resident UKI's embedded cmdline points at the live root regardless
+// of any snapshot-targeted options we'd otherwise write.
+func (p *Planner) planESPModeUKI(snapshot *btrfs.Snapshot, bs *BootSet) *BootPlan {
+	switch p.ukiStrategy {
+	case UKIStrategySkip:
+		log.Debug().
+			Str("snapshot", snapshot.Path).
+			Str("kernel", bs.KernelName).
+			Msg("Skipping ESP-mode UKI snapshot entry (uki.snapshot_strategy=skip)")
+		return nil
+	case UKIStrategyWarn:
+		log.Warn().
+			Str("snapshot", snapshot.Path).
+			Str("kernel", bs.KernelName).
+			Msg("ESP-mode UKI snapshot entry will boot live root (uki.snapshot_strategy=warn)")
+		return &BootPlan{
+			Snapshot: snapshot,
+			Mode:     BootModeESP,
+			Layout:   LayoutUKI,
+			BootSet:  bs,
+		}
+	case UKIStrategyDisable:
+		log.Info().
+			Str("snapshot", snapshot.Path).
+			Str("kernel", bs.KernelName).
+			Msg("Marking ESP-mode UKI snapshot entry as disabled (uki.snapshot_strategy=disable)")
+		return &BootPlan{
+			Snapshot: snapshot,
+			Mode:     BootModeESP,
+			Layout:   LayoutUKI,
+			BootSet:  bs,
+			Disabled: true,
+		}
+	default:
+		return nil
+	}
 }
 
 // buildBtrfsVolume returns the best identifier for the root btrfs filesystem
@@ -303,14 +358,19 @@ func (p *Planner) buildBtrfsVolume() string {
 }
 
 // kernelImageSet represents a kernel and its associated initramfs files
-// found inside a snapshot's /boot directory.
+// found inside a snapshot's /boot directory. For UKI sets, kernelRelPath is
+// /boot/EFI/Linux/<file>.efi and initrdFilenames is nil.
 type kernelImageSet struct {
+	kernelRelPath   string // path relative to the snapshot root, e.g. "boot/vmlinuz-linux" or "boot/EFI/Linux/linux.efi"
 	kernelFilename  string
 	initrdFilenames []string
+	layout          BootLayout
 }
 
 // findKernelImages scans a directory for kernel images and pairs them with
-// their initramfs. Uses the default patterns for matching.
+// their initramfs. Also walks <bootDir>/EFI/Linux/ for UKIs. Each returned
+// kernelImageSet carries its layout so the planner can emit the correct
+// submenu shape.
 func findKernelImages(bootDir string) []kernelImageSet {
 	entries, err := os.ReadDir(bootDir)
 	if err != nil {
@@ -324,7 +384,6 @@ func findKernelImages(bootDir string) []kernelImageSet {
 
 	patterns := DefaultPatterns()
 
-	// First pass: find all images by matching patterns
 	type imageMatch struct {
 		filename   string
 		role       ImageRole
@@ -347,11 +406,10 @@ func findKernelImages(bootDir string) []kernelImageSet {
 				role:       pattern.Role,
 				kernelName: pattern.DeriveKernelName(filename),
 			})
-			break // first match wins
+			break
 		}
 	}
 
-	// Group by kernel name
 	type imageGroup struct {
 		kernel   string
 		initrds  []string
@@ -361,7 +419,7 @@ func findKernelImages(bootDir string) []kernelImageSet {
 
 	for _, m := range matches {
 		if m.kernelName == "" {
-			continue // microcode, skip grouping
+			continue
 		}
 		g, exists := groups[m.kernelName]
 		if !exists {
@@ -378,7 +436,6 @@ func findKernelImages(bootDir string) []kernelImageSet {
 		}
 	}
 
-	// Also collect microcode images (shared across all sets)
 	var microcodeFiles []string
 	for _, m := range matches {
 		if m.role == RoleMicrocode {
@@ -386,7 +443,6 @@ func findKernelImages(bootDir string) []kernelImageSet {
 		}
 	}
 
-	// Build kernel image sets in deterministic order
 	names := make([]string, 0, len(groups))
 	for name := range groups {
 		names = append(names, name)
@@ -402,18 +458,56 @@ func findKernelImages(bootDir string) []kernelImageSet {
 		}
 
 		var allInitrds []string
-		// Microcode first (rEFInd loads initrds in order)
 		allInitrds = append(allInitrds, microcodeFiles...)
-		// Then primary initramfs
 		allInitrds = append(allInitrds, g.initrds...)
 
 		result = append(result, kernelImageSet{
+			kernelRelPath:   filepath.ToSlash(filepath.Join("boot", g.kernel)),
 			kernelFilename:  g.kernel,
 			initrdFilenames: allInitrds,
+			layout:          LayoutSplit,
 		})
 	}
 
+	result = append(result, findUKIsInSnapshot(bootDir)...)
+
 	return result
+}
+
+// findUKIsInSnapshot walks <bootDir>/EFI/Linux/ for *.efi UKIs. Each becomes
+// a self-contained kernelImageSet with no initrds and layout=UKI.
+func findUKIsInSnapshot(bootDir string) []kernelImageSet {
+	ukiDir := filepath.Join(bootDir, "EFI", "Linux")
+	entries, err := os.ReadDir(ukiDir)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			log.Debug().Err(err).Str("dir", ukiDir).Msg("Could not scan snapshot UKI directory")
+		}
+		return nil
+	}
+
+	var names []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(strings.ToLower(name), ".efi") {
+			continue
+		}
+		names = append(names, name)
+	}
+	slices.Sort(names)
+
+	out := make([]kernelImageSet, 0, len(names))
+	for _, name := range names {
+		out = append(out, kernelImageSet{
+			kernelRelPath:  filepath.ToSlash(filepath.Join("boot", "EFI", "Linux", name)),
+			kernelFilename: name,
+			layout:         LayoutUKI,
+		})
+	}
+	return out
 }
 
 // GroupBySnapshot groups plans by snapshot path.

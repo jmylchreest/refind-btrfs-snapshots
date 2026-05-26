@@ -6,6 +6,11 @@ Full documentation for `refind-btrfs-snapshots`. For installation and quick star
 
 - [How It Works](#how-it-works)
 - [Boot Mode Detection](#boot-mode-detection)
+- [Boot Layouts](#boot-layouts)
+  - [Split Layout](#split-layout)
+  - [BLS Layout](#bls-layout-boot-loader-specification-type-1)
+  - [UKI Layout](#uki-layout-unified-kernel-image-bls-type-2)
+  - [UKI Snapshots: ESP-mode Caveat](#uki-snapshots-esp-mode-caveat)
 - [Commands](#commands)
   - [generate](#generate)
   - [list](#list)
@@ -26,6 +31,7 @@ Full documentation for `refind-btrfs-snapshots`. For installation and quick star
 - [Integration Examples](#integration-examples)
 - [Time and Format Handling](#time-and-format-handling)
 - [Troubleshooting](#troubleshooting)
+- [Future Bootloader Support](#future-bootloader-support)
 - [Development](#development)
 
 ## How It Works
@@ -79,6 +85,46 @@ submenuentry "Arch Linux (2025-02-14T10:00:00Z)" {
 A single rEFInd menu entry can contain both ESP-mode and btrfs-mode submenus. This happens naturally when a system transitions between boot configurations — older snapshots retain their original mode. The `status` command shows a `BOOT` column indicating each snapshot's detected mode.
 
 > **Note:** Boot mode detection requires rEFInd's btrfs EFI driver (`btrfs_x64.efi`) to be installed for btrfs-mode entries to work. This driver is included with rEFInd and is typically loaded automatically.
+
+## Boot Layouts
+
+Boot Layout is **orthogonal to Boot Mode**. Boot Mode describes how `/boot` is mounted within a snapshot (ESP vs btrfs); Boot Layout describes how the kernel artefacts are arranged on disk (Split vs BLS vs UKI). A single boot set has exactly one layout; a system can host multiple boot sets with different layouts simultaneously.
+
+### Split Layout
+
+The classic layout: kernel, initramfs, and microcode live as separate files (typically under `/boot`) referenced from `refind.conf` or `refind_linux.conf`. This is what most installations use today.
+
+### BLS Layout (Boot Loader Specification Type #1)
+
+A drop-in `.conf` file under `<esp>/loader/entries/*.conf` describes the entry. The `.conf` names a `linux` (kernel) path, one or more `initrd` paths, and an `options` string. The referenced files live elsewhere on the ESP. Spec: <https://uapi-group.org/specifications/specs/boot_loader_specification/#type-1-boot-loader-specification-entries>.
+
+> **rEFInd does not parse BLS `.conf` files.** This tool reads them as a discovery signal — we use them to learn the canonical kernel and cmdline for a kernel — but the rEFInd output we generate references the underlying loose files. **Output shape for BLS layout is identical to Split layout.** If your system boots exclusively via systemd-boot, see [Future Bootloader Support](#future-bootloader-support).
+
+### UKI Layout (Unified Kernel Image, BLS Type #2)
+
+A single PE/EFI binary at `<esp>/EFI/Linux/<name>.efi` containing the kernel, initramfs, cmdline, and OS-release metadata. The systemd-stub launches the embedded kernel with the embedded cmdline. Spec: <https://uapi-group.org/specifications/specs/boot_loader_specification/#type-2-efi-unified-kernel-images>.
+
+rEFInd treats UKIs as standard EFI loaders — it autodetects them from `<esp>/EFI/Linux/`. Generated UKI menu entries contain only a `loader` line. There is no `initrd` (it is embedded) and **no `options`** (the systemd-stub ignores boot-loader-supplied cmdline by default; passing `options` only takes effect if the UKI was built with cmdline addons).
+
+### UKI Snapshots: ESP-mode Caveat
+
+A UKI's embedded cmdline points at a specific root subvolume — there's no way for the boot loader to override it on a standard UKI. The implications differ depending on where the UKI lives:
+
+**Btrfs mode (UKI inside the snapshot's `/boot/EFI/Linux/`):**
+Each snapshot contains its own UKI with its own embedded cmdline pointing at that snapshot's subvolume. Booting the snapshot's UKI boots the snapshot. Fully supported.
+
+**ESP mode (UKI on the ESP, `<esp>/EFI/Linux/`):**
+The UKI's embedded cmdline points at the **live** root, not any snapshot. We cannot write a snapshot boot entry that actually enters the snapshot — the UKI will always boot live root regardless of what we put in `options`.
+
+Configure the response via `uki.snapshot_strategy`:
+
+| Strategy  | Behaviour                                                                                                                 |
+|-----------|---------------------------------------------------------------------------------------------------------------------------|
+| `skip` (default) | Do not generate snapshot entries for ESP-mode UKI sets. Safest — no misleading entries appear in the menu.          |
+| `warn`    | Generate the entry but log a clear warning that it will boot live root, not the snapshot.                                 |
+| `disable` | Generate the entry with rEFInd's `disabled` directive — visible in the menu but unbootable, signalling the limitation.    |
+
+Btrfs-mode UKI snapshots are unaffected by this setting and are always generated.
 
 ## Commands
 
@@ -282,6 +328,7 @@ esp:
 | **Logging** | `log_level` | `"info"` | Log verbosity: `trace`, `debug`, `info`, `warn`, `error` |
 | **Kernel** | `kernel.stale_snapshot_action` | `"delete"` | Action for stale snapshots: `delete`, `warn`, `disable`, `fallback` |
 | | `kernel.boot_image_patterns` | *(built-in)* | Custom boot image patterns (see config file) |
+| **UKI** | `uki.snapshot_strategy` | `"skip"` | Behaviour for ESP-mode UKI snapshots: `skip`, `warn`, `disable`. See [UKI Snapshots: ESP-mode Caveat](#uki-snapshots-esp-mode-caveat) |
 | **Advanced** | `advanced.naming.rwsnap_format` | `"2006-01-02_15-04-05"` | Timestamp format for writable snapshot filenames |
 | | `advanced.naming.menu_format` | `"2006-01-02T15:04:05Z"` | Timestamp format for menu entry titles |
 
@@ -333,6 +380,7 @@ Built-in defaults cover most distributions:
 - **Debian/Ubuntu**: `vmlinuz-*`, `initrd.img-*`
 - **Generic**: `vmlinuz`, `vmlinuz.efi`, `bzImage`, `initrd.img`, `initrd`, `initramfs.img`
 - **Microcode**: `intel-ucode.img`, `amd-ucode.img`
+- **UKI**: `*.efi` (matched after kernel/initramfs patterns; typically located under `<esp>/EFI/Linux/`)
 
 For non-standard naming, override patterns in the config file:
 
@@ -354,7 +402,7 @@ kernel:
 
 Each pattern supports:
 - `glob` — filename glob to match
-- `role` — one of `kernel`, `initramfs`, `fallback_initramfs`, `microcode`
+- `role` — one of `kernel`, `initramfs`, `fallback_initramfs`, `microcode`, `uki`
 - `strip_prefix` / `strip_suffix` — removed from the filename to derive the kernel name
 - `kernel_name` — explicit override when stripping isn't possible (e.g., generic `vmlinuz`)
 
@@ -605,6 +653,21 @@ sudo refind-btrfs-snapshots generate --log-level debug --dry-run
 ```
 
 Shows: ESP detection, snapshot discovery, boot image scanning, kernel version inspection, boot mode detection per snapshot, staleness results, configuration resolution, and entry generation.
+
+## Future Bootloader Support
+
+`refind-btrfs-snapshots` currently generates rEFInd configuration only. The discovery layer — kernel scanning, UKI inspection (`debug/pe`), microcode parsing, BLS Type #1 entry parsing — is intentionally bootloader-agnostic. The `BootLayout` model (`split`, `bls`, `uki`) describes how kernel artefacts are arranged on disk, independent of which bootloader will consume them.
+
+This leaves room for future support of additional bootloaders:
+
+| Bootloader      | Native BLS Type #1 | Native UKI | Notes                                                       |
+|-----------------|--------------------|------------|-------------------------------------------------------------|
+| rEFInd          | No (autoscan only) | Yes (as EFI binary) | Current default. Treats UKIs as standard EFI loaders. |
+| systemd-boot    | Yes                | Yes        | Natural fit for BLS-discovered systems.                     |
+| GRUB            | With `GRUB_ENABLE_BLSCFG` | Yes (chainload) | Fedora and derivatives default to BLS.                 |
+| limine          | Partial            | Yes        | Newer; ongoing BLS support.                                 |
+
+Until additional bootloader generators are implemented, the `kernel-spy` development tool (built from this repository, not installed via the AUR package) can be used to inspect what is discovered on disk across all three layouts.
 
 ## Development
 
