@@ -8,6 +8,7 @@ type Config struct {
 	Behavior BehaviorConfig `koanf:"behavior"`
 	Kernel   KernelConfig   `koanf:"kernel"`
 	UKI      UKIConfig      `koanf:"uki"`
+	BLS      BLSConfig      `koanf:"bls"`
 	Display  DisplayConfig  `koanf:"display"`
 	Advanced AdvancedConfig `koanf:"advanced"`
 	List     ListConfig     `koanf:"list"`
@@ -61,6 +62,15 @@ type PatternConfig struct {
 
 type DisplayConfig struct {
 	LocalTime Truthy `koanf:"local_time"`
+}
+
+// BLSConfig: optional BLS Type #1 entry output, consumed by the bls-btrfs-snapshots
+// binary. rEFInd does not read these. Only ESP-mode snapshots emit — systemd-boot
+// and BLS-GRUB cannot traverse btrfs subvolumes.
+type BLSConfig struct {
+	WriteEntries Truthy `koanf:"write_entries"`
+	EntriesDir   string `koanf:"entries_dir"`
+	EntryPrefix  string `koanf:"entry_prefix"`
 }
 
 // UKIConfig.SnapshotStrategy: see docs/USAGE.md "UKI Snapshots: ESP-mode Caveat".
