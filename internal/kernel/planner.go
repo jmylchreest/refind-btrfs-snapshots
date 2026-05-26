@@ -27,60 +27,37 @@ const (
 	BootModeBtrfs BootMode = "btrfs"
 )
 
-// BootPlan describes how to boot a specific snapshot. Each snapshot gets its
-// own BootPlan because the boot mode is determined per-snapshot from its fstab.
+// BootPlan describes how to boot one snapshot. One plan per snapshot per
+// boot set — boot mode is fstab-determined per snapshot, not system-wide.
 type BootPlan struct {
-	// Snapshot is the snapshot this plan is for.
 	Snapshot *btrfs.Snapshot
+	Mode     BootMode
+	Layout   BootLayout
 
-	// Mode is the detected boot mode for this snapshot.
-	Mode BootMode
-
-	// Layout describes the on-disk arrangement of this plan's kernel
-	// (split kernel+initrd vs UKI, etc.). Generator branches on this
-	// to emit the right submenu shape (UKIs have no initrd/options).
-	Layout BootLayout
-
-	// Disabled is true when the plan should be emitted with rEFInd's
-	// 'disabled' directive — visible in the menu but unbootable. Currently
-	// set when UKIStrategy=disable for an ESP-mode UKI plan.
+	// Disabled emits rEFInd's `disabled` directive — visible but unbootable.
+	// Set when UKIStrategy=disable on an ESP-mode UKI plan.
 	Disabled bool
 
-	// BootSet is the ESP boot set matched to this snapshot.
-	// Nil for btrfs-mode snapshots.
-	BootSet *BootSet
+	BootSet   *BootSet         // nil for btrfs-mode plans
+	Staleness *StalenessResult // nil for btrfs-mode plans
 
-	// Staleness is the staleness check result for this snapshot+bootset.
-	// Nil for btrfs-mode snapshots.
-	Staleness *StalenessResult
-
-	// SnapshotKernel is the snapshot-relative path to the kernel image.
-	// For LayoutSplit/LayoutBLS, points at vmlinuz. For LayoutUKI, points
-	// at the .efi file inside the snapshot.
-	// e.g., "/@/.snapshots/73/snapshot/boot/vmlinuz-linux"
-	//       "/@/.snapshots/73/snapshot/boot/EFI/Linux/linux.efi"
-	SnapshotKernel string
-
-	// SnapshotInitrds are the snapshot-relative paths to initramfs images.
-	// Empty for LayoutUKI (initramfs is embedded in the UKI).
+	// SnapshotKernel and SnapshotInitrds are absolute paths within the
+	// btrfs filesystem (e.g. /@/.snapshots/73/snapshot/boot/vmlinuz-linux).
+	// SnapshotInitrds is empty for LayoutUKI — the initramfs is embedded.
+	SnapshotKernel  string
 	SnapshotInitrds []string
 
-	// BtrfsVolume is the identifier for the btrfs partition to use in
-	// rEFInd's "volume" directive (partition label, UUID, etc.).
+	// BtrfsVolume is the rEFInd "volume" identifier (label, UUID, etc.).
 	BtrfsVolume string
 }
 
-// ShouldSkip returns true if this snapshot should be excluded from generation
-// (e.g., stale with action=delete in ESP mode).
 func (bp *BootPlan) ShouldSkip() bool {
 	if bp.Mode == BootModeBtrfs {
-		return false // btrfs-mode snapshots are never stale
+		return false
 	}
 	return bp.Staleness != nil && bp.Staleness.IsStale && bp.Staleness.Action == ActionDelete
 }
 
-// IsStale returns true if this snapshot has staleness issues.
-// Always false for btrfs-mode snapshots.
 func (bp *BootPlan) IsStale() bool {
 	if bp.Mode == BootModeBtrfs {
 		return false
@@ -88,8 +65,8 @@ func (bp *BootPlan) IsStale() bool {
 	return bp.Staleness != nil && bp.Staleness.IsStale
 }
 
-// Planner creates BootPlans for snapshots by inspecting each snapshot's fstab
-// to determine whether kernels come from the ESP or from within the snapshot.
+// Planner produces BootPlans by inspecting each snapshot's fstab to decide
+// whether its kernel lives on the ESP or inside the snapshot.
 type Planner struct {
 	fstabManager *fstab.Manager
 	checker      *Checker
@@ -98,14 +75,6 @@ type Planner struct {
 	ukiStrategy  UKIStrategy
 }
 
-// NewPlanner creates a Planner.
-//
-// Parameters:
-//   - fstabMgr: used to parse snapshot fstab files
-//   - checker: staleness checker for ESP-mode snapshots (may be nil if no boot sets)
-//   - bootSets: detected ESP boot sets (may be empty)
-//   - rootFS: the root btrfs filesystem (used to determine if /boot is on the same device)
-//   - ukiStrategy: how to handle ESP-mode UKI boot sets (skip/warn/disable)
 func NewPlanner(fstabMgr *fstab.Manager, checker *Checker, bootSets []*BootSet, rootFS *btrfs.Filesystem, ukiStrategy UKIStrategy) *Planner {
 	return &Planner{
 		fstabManager: fstabMgr,
@@ -116,9 +85,9 @@ func NewPlanner(fstabMgr *fstab.Manager, checker *Checker, bootSets []*BootSet, 
 	}
 }
 
-// Plan creates a BootPlan for each snapshot. A snapshot may produce multiple
-// BootPlans when in ESP mode with multiple boot sets. In btrfs mode, each
-// snapshot produces exactly one plan per detected in-snapshot kernel.
+// Plan emits one BootPlan per (snapshot × boot set). A snapshot in ESP
+// mode yields one plan per boot set; a snapshot in btrfs mode yields one
+// plan per kernel found inside the snapshot.
 func (p *Planner) Plan(snapshots []*btrfs.Snapshot) []*BootPlan {
 	var plans []*BootPlan
 

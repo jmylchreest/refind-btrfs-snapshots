@@ -82,10 +82,10 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		log.Debug().Msg("No boot images found on ESP, staleness checking will be unavailable")
 	}
 
-	r := runner.New(cfg.DryRun)
+	r := runner.New(cfg.DryRun.IsTrue())
 	pipeline := &generator.Pipeline{
 		Cfg:           cfg,
-		Btrfs:         btrfs.NewManager(cfg.Snapshot.SearchDirectories, cfg.Snapshot.MaxDepth, cfg.Advanced.Naming.RwsnapFormat, cfg.Display.LocalTime),
+		Btrfs:         btrfs.NewManager(cfg.Snapshot.SearchDirectories, cfg.Snapshot.MaxDepth, cfg.Advanced.Naming.RwsnapFormat, cfg.Display.LocalTime.IsTrue()),
 		Fstab:         fstab.NewManager(),
 		Runner:        r,
 		ESPPath:       espPath,
@@ -106,10 +106,10 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	if len(patch.Files) == 0 {
 		log.Info().Msg("No changes needed - configurations are up to date")
 	} else if r.IsDryRun() {
-		diff.ShowPatchWithPager(patch, !cfg.Yes)
+		diff.ShowPatchWithPager(patch, !cfg.AutoApprove.IsTrue())
 		log.Info().Msg("[DRY RUN] Would apply all changes shown above")
 	} else {
-		if !cfg.Yes {
+		if !cfg.AutoApprove.IsTrue() {
 			if !diff.ConfirmPatchChanges(patch, false) {
 				log.Info().Msg("User declined changes - operation cancelled")
 				return nil

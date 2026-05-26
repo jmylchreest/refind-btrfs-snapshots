@@ -248,10 +248,8 @@ func (g *Generator) generateSingleMenuEntry(title string, templateEntry *MenuEnt
 	return content.String()
 }
 
-// writeUKISubmenuBody emits a UKI-shaped submenu body: optionally a `disabled`
-// directive, plus volume+loader overrides for btrfs-mode UKIs. NEVER emits
-// initrd or options — the initramfs is embedded in the UKI and the
-// systemd-stub ignores boot-loader-supplied cmdline.
+// writeUKISubmenuBody emits no initrd line (embedded in UKI) and no options
+// line (systemd-stub ignores boot-loader-supplied cmdline on standard UKIs).
 func (g *Generator) writeUKISubmenuBody(content *strings.Builder, plan *kernel.BootPlan) {
 	if plan.Disabled {
 		content.WriteString("        disabled\n")
@@ -266,10 +264,8 @@ func (g *Generator) writeUKISubmenuBody(content *strings.Builder, plan *kernel.B
 	}
 }
 
-// writeSplitSubmenuBody emits the existing Split-layout submenu body:
-// btrfs-mode adds volume/loader/initrd overrides; both modes set the
-// snapshot-targeted options string. BLS-layout sets share this shape
-// because rEFInd doesn't read BLS .conf files.
+// writeSplitSubmenuBody handles both Split- and BLS-layout sets: rEFInd
+// doesn't read BLS .conf files, so the emitted shape is identical.
 func (g *Generator) writeSplitSubmenuBody(content *strings.Builder, plan *kernel.BootPlan, templateEntry *MenuEntry, snapshot *btrfs.Snapshot) {
 	if plan != nil && plan.Mode == kernel.BootModeBtrfs {
 		if plan.BtrfsVolume != "" {

@@ -17,12 +17,12 @@ func Defaults() Config {
 		},
 		ESP: ESPConfig{
 			UUID:       "",
-			AutoDetect: true,
+			AutoDetect: Truthy(true),
 			MountPoint: "",
 		},
 		Behavior: BehaviorConfig{
-			ExitOnSnapshotBoot:  true,
-			CleanupOldSnapshots: true,
+			ExitOnSnapshotBoot:  Truthy(true),
+			CleanupOldSnapshots: Truthy(true),
 		},
 		Kernel: KernelConfig{
 			StaleSnapshotAction: "delete",
@@ -36,7 +36,7 @@ func Defaults() Config {
 				MenuFormat:   "2006-01-02T15:04:05Z",
 			},
 		},
-		Display:  DisplayConfig{LocalTime: false},
+		Display:  DisplayConfig{LocalTime: Truthy(false)},
 		LogLevel: "info",
 	}
 }

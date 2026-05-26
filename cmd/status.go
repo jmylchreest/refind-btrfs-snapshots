@@ -77,9 +77,9 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 	if jsonOutput {
-		return outputStatusJSON(bootSets, matrix, cfg.Display.LocalTime)
+		return outputStatusJSON(bootSets, matrix, cfg.Display.LocalTime.IsTrue())
 	}
-	return outputStatusTable(bootSets, matrix, cfg.Display.LocalTime)
+	return outputStatusTable(bootSets, matrix, cfg.Display.LocalTime.IsTrue())
 }
 
 // snapshotCompatibility holds one snapshot's staleness results against all boot sets.

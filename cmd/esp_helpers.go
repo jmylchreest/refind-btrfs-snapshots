@@ -30,7 +30,7 @@ import (
 func espOptionsFromConfig(cfg *config.Config) discovery.ESPOptions {
 	return discovery.ESPOptions{
 		UUID:       cfg.ESP.UUID,
-		AutoDetect: cfg.ESP.AutoDetect,
+		AutoDetect: cfg.ESP.AutoDetect.IsTrue(),
 		MountPoint: cfg.ESP.MountPoint,
 	}
 }
@@ -88,7 +88,7 @@ func discoverSnapshots(cfg *config.Config, searchDirOverrides []string) ([]*btrf
 		searchDirs = searchDirOverrides
 		log.Debug().Strs("search_dirs", searchDirs).Msg("Using overridden search directories")
 	}
-	btrfsManager := btrfs.NewManager(searchDirs, cfg.Snapshot.MaxDepth, cfg.Advanced.Naming.RwsnapFormat, cfg.Display.LocalTime)
+	btrfsManager := btrfs.NewManager(searchDirs, cfg.Snapshot.MaxDepth, cfg.Advanced.Naming.RwsnapFormat, cfg.Display.LocalTime.IsTrue())
 
 	filesystems, err := btrfsManager.DetectBtrfsFilesystems()
 	if err != nil {

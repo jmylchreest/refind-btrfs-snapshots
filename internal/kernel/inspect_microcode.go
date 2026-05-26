@@ -7,18 +7,11 @@ import (
 	"strings"
 )
 
-// InspectMicrocode parses an x86 microcode image (intel-ucode.img /
-// amd-ucode.img) and extracts vendor, dates, and per-block CPU identifiers.
+// InspectMicrocode extracts vendor, dates, and per-block CPU identifiers
+// from an x86 microcode image. Distros usually CPIO-wrap the container,
+// so we try CPIO first and fall through to raw Intel then raw AMD layouts.
 //
-// Distros wrap the microcode container files in a CPIO newc archive whose
-// entries land at /lib/firmware/intel-ucode/ or /lib/firmware/amd-ucode/
-// in the early initramfs. We try CPIO first, then fall through to raw
-// Intel and raw AMD container layouts. Any parse failure returns (nil, err)
-// so the caller can fall back to filename-only role classification.
-//
-// References:
-//   - Intel SDM Vol. 3A §9.11.1 ("Microcode Update Format")
-//   - Linux kernel arch/x86/kernel/cpu/microcode/{intel,amd}.c
+// Refs: Intel SDM Vol. 3A §9.11.1; Linux arch/x86/kernel/cpu/microcode/{intel,amd}.c.
 func InspectMicrocode(path string) (*InspectedMetadata, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -66,8 +59,8 @@ func isCPIONewcMagic(data []byte) bool {
 	return len(data) >= 6 && string(data[:6]) == cpioNewcMagic
 }
 
-// parseCPIONewc decodes a CPIO newc archive. Each header is 110 bytes of
-// ASCII hex; padding aligns header+name and data to 4-byte boundaries.
+// parseCPIONewc walks a CPIO newc archive. Header is 110 bytes of ASCII
+// hex; both name and data are padded to 4-byte boundaries.
 func parseCPIONewc(data []byte) ([]cpioEntry, error) {
 	var entries []cpioEntry
 	off := 0
@@ -135,8 +128,6 @@ func padTo4(n int) int {
 	return n + (4 - n%4)
 }
 
-// walkCPIOForMicrocode finds the first GenuineIntel.bin or AuthenticAMD.bin
-// entry and routes its bytes to the appropriate vendor parser.
 func walkCPIOForMicrocode(data []byte, meta *InspectedMetadata) error {
 	entries, err := parseCPIONewc(data)
 	if err != nil {
@@ -159,8 +150,6 @@ func walkCPIOForMicrocode(data []byte, meta *InspectedMetadata) error {
 	return fmt.Errorf("cpio archive contained no recognised microcode binary")
 }
 
-// --- Intel container -----------------------------------------------------
-
 const (
 	intelHeaderLen          = 48
 	intelDefaultDataSize    = 2000
@@ -174,8 +163,8 @@ type intelBlock struct {
 	ProcessorSignature uint32
 }
 
-// parseIntelMicrocode walks consecutive Intel update blocks. Returns ok=false
-// when the first header doesn't look Intel-shaped, so the caller can try AMD.
+// parseIntelMicrocode returns ok=false on a non-Intel container so the
+// caller can try AMD without losing the original bytes.
 func parseIntelMicrocode(data []byte) ([]intelBlock, bool) {
 	if len(data) < intelHeaderLen {
 		return nil, false
@@ -236,9 +225,7 @@ func fillIntelMeta(meta *InspectedMetadata, blocks []intelBlock) {
 	meta.MicrocodeLatestDate = latest
 }
 
-// --- AMD container -------------------------------------------------------
-
-// AMD container magic is the little-endian u32 0x00414D44 ("DMA\0" on disk).
+// amdMagic is little-endian u32 0x00414D44 ("DMA\0" on disk).
 var amdMagic = []byte{0x44, 0x4D, 0x41, 0x00}
 
 const (
@@ -247,13 +234,11 @@ const (
 )
 
 type amdPatch struct {
-	Date             uint32
-	PatchID          uint32
-	ProcessorRevID   uint32
+	Date           uint32
+	PatchID        uint32
+	ProcessorRevID uint32
 }
 
-// parseAMDMicrocode walks an AMD microcode container after its equivalence
-// table. Returns ok=false when the magic is missing.
 func parseAMDMicrocode(data []byte) ([]amdPatch, bool) {
 	if len(data) < 12 {
 		return nil, false
@@ -275,7 +260,6 @@ func parseAMDMicrocode(data []byte) ([]amdPatch, bool) {
 		patchSize := binary.LittleEndian.Uint32(data[off+4 : off+8])
 		off += 8
 		if patchType != amdPatchTypeID {
-			// Skip unknown sections.
 			if int(patchSize) > len(data)-off {
 				break
 			}

@@ -27,7 +27,7 @@ func runListVolumes(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	btrfsManager := btrfs.NewManager(cfg.Snapshot.SearchDirectories, cfg.Snapshot.MaxDepth, cfg.Advanced.Naming.RwsnapFormat, cfg.Display.LocalTime)
+	btrfsManager := btrfs.NewManager(cfg.Snapshot.SearchDirectories, cfg.Snapshot.MaxDepth, cfg.Advanced.Naming.RwsnapFormat, cfg.Display.LocalTime.IsTrue())
 
 	filesystems, err := btrfsManager.DetectBtrfsFilesystems()
 	if err != nil {

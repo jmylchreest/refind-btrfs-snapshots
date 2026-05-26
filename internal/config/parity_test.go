@@ -62,7 +62,7 @@ var trackedKeys = []struct {
 	{"snapshot.search_directories", kindStringSlice, func(c *Config) any { return c.Snapshot.SearchDirectories }},
 	{"snapshot.selection_count", kindInt, func(c *Config) any { return c.Snapshot.SelectionCount }},
 	{"snapshot.writable_method", kindString, func(c *Config) any { return c.Snapshot.WritableMethod }},
-	{"yes", kindBool, func(c *Config) any { return c.Yes }},
+	{"yes", kindBool, func(c *Config) any { return c.AutoApprove }},
 }
 
 // bootPatternsAsMaps converts []PatternConfig into the untyped

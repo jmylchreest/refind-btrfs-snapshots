@@ -16,9 +16,9 @@ func TestDefaults(t *testing.T) {
 	assert.Equal(t, 3, d.Snapshot.MaxDepth)
 	assert.Equal(t, "toggle", d.Snapshot.WritableMethod)
 	assert.Equal(t, "/EFI/refind/refind.conf", d.Refind.ConfigPath)
-	assert.True(t, d.ESP.AutoDetect)
-	assert.True(t, d.Behavior.ExitOnSnapshotBoot)
-	assert.True(t, d.Behavior.CleanupOldSnapshots)
+	assert.True(t, d.ESP.AutoDetect.IsTrue())
+	assert.True(t, d.Behavior.ExitOnSnapshotBoot.IsTrue())
+	assert.True(t, d.Behavior.CleanupOldSnapshots.IsTrue())
 	assert.Equal(t, "delete", d.Kernel.StaleSnapshotAction)
 	assert.Equal(t, "info", d.LogLevel)
 	// uki.snapshot_strategy controls behaviour for ESP-mode UKI snapshot

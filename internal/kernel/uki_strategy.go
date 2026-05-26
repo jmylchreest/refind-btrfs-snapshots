@@ -2,33 +2,21 @@ package kernel
 
 import "github.com/rs/zerolog/log"
 
-// UKIStrategy controls how planESPMode treats UKI-layout boot sets.
-//
-// A UKI's embedded .cmdline is the only cmdline the systemd-stub honours on
-// standard UKIs — load_options from the boot loader are ignored. That means
-// snapshot menu entries pointing at an ESP-resident UKI would always boot the
-// live root regardless of any options we set. UKIStrategy picks the response
-// to that limitation; btrfs-mode UKI sets (UKI inside the snapshot itself)
-// are unaffected.
+// UKIStrategy chooses how to handle ESP-mode UKI snapshot entries.
+// systemd-stub ignores load_options on standard UKIs, so a snapshot
+// menu entry pointing at an ESP-resident UKI would always boot live
+// root regardless of options we'd set. Btrfs-mode UKIs (inside the
+// snapshot itself) are unaffected and always emitted.
 type UKIStrategy string
 
 const (
-	// UKIStrategySkip omits ESP-mode UKI snapshot plans entirely. Safest;
-	// no misleading entries appear in the menu. Default.
-	UKIStrategySkip UKIStrategy = "skip"
-
-	// UKIStrategyWarn generates the plan and logs a warning that the entry
-	// will boot live root, not the snapshot.
-	UKIStrategyWarn UKIStrategy = "warn"
-
-	// UKIStrategyDisable generates the plan with Disabled=true so the
-	// generator emits rEFInd's `disabled` directive — the entry is visible
-	// but unbootable, surfacing the limitation to users without false hope.
+	UKIStrategySkip    UKIStrategy = "skip"
+	UKIStrategyWarn    UKIStrategy = "warn"
 	UKIStrategyDisable UKIStrategy = "disable"
 )
 
-// ParseUKIStrategy converts a string to a UKIStrategy. Empty or unknown
-// values fall back to UKIStrategySkip (the safest default).
+// ParseUKIStrategy falls back to UKIStrategySkip for empty or unknown
+// values — the safest default for a constraint users may not understand.
 func ParseUKIStrategy(s string) UKIStrategy {
 	switch UKIStrategy(s) {
 	case UKIStrategySkip, UKIStrategyWarn, UKIStrategyDisable:

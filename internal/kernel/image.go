@@ -40,36 +40,18 @@ func ParseImageRole(s string) (ImageRole, error) {
 	}
 }
 
-// BootLayout describes how a set of related boot artefacts compose into a
-// bootable configuration.
-//
-// References:
-//   - Boot Loader Specification: https://uapi-group.org/specifications/specs/boot_loader_specification/
-//   - Type #1 entries (.conf snippets): drop-in files under <esp>/loader/entries/*.conf
-//   - Type #2 entries (UKIs): single PE binaries under <esp>/EFI/Linux/*.efi
+// BootLayout describes how a kernel's artefacts are arranged on disk.
+// LayoutSplit is loose kernel+initrd files. LayoutBLS is a Type #1 .conf
+// referencing loose files. LayoutUKI is a Type #2 self-contained PE.
+// Spec: https://uapi-group.org/specifications/specs/boot_loader_specification/
 type BootLayout string
 
 const (
-	// LayoutSplit is the classic Arch-style layout: kernel, initramfs, and
-	// microcode live as separate files (typically under /boot) and are
-	// referenced directly from refind.conf or refind_linux.conf. This is not
-	// strictly a Boot Loader Specification layout, but is the most common
-	// arrangement on systems that use rEFInd without BLS .conf snippets.
 	LayoutSplit BootLayout = "split"
-
-	// LayoutBLS is the BLS-snippet layout: a .conf file under
-	// <esp>/loader/entries/ names the kernel, initrd, options, etc. The
-	// referenced files live elsewhere on the ESP. Corresponds to BLS
-	// "Type #1" entries in the spec.
-	LayoutBLS BootLayout = "bls"
-
-	// LayoutUKI is a Unified Kernel Image: a single PE/EFI binary (usually
-	// under <esp>/EFI/Linux/) containing the kernel, initramfs, cmdline, and
-	// metadata. Corresponds to BLS "Type #2" entries.
-	LayoutUKI BootLayout = "uki"
+	LayoutBLS   BootLayout = "bls"
+	LayoutUKI   BootLayout = "uki"
 )
 
-// ParseBootLayout converts a string to a BootLayout, returning an error for unknown values.
 func ParseBootLayout(s string) (BootLayout, error) {
 	switch BootLayout(s) {
 	case LayoutSplit, LayoutBLS, LayoutUKI:
@@ -187,65 +169,41 @@ type InspectedMetadata struct {
 	MicrocodeProcessorSignatures []uint32
 }
 
-// BootImage represents a discovered boot image file on disk.
+// BootImage is a discovered boot image file. Inspected is nil when binary
+// inspection failed — the scanner falls back to filename-derived metadata.
 type BootImage struct {
-	// Path is the ESP-relative path (e.g., "/boot/vmlinuz-linux").
-	Path string
-
-	// AbsPath is the absolute filesystem path (e.g., "/boot/efi/boot/vmlinuz-linux").
-	AbsPath string
-
-	// Filename is the base filename (e.g., "vmlinuz-linux").
-	Filename string
-
-	// Role classifies this image (kernel, initramfs, fallback_initramfs, microcode).
-	Role ImageRole
-
-	// KernelName is the derived kernel identifier that groups related images together
-	// (e.g., "linux", "linux-lts", "linux-cachyos"). Empty for microcode.
-	KernelName string
-
-	// Inspected holds binary-inspection metadata. Nil if inspection was not attempted
-	// or failed (in which case the scanner logs a warning and falls back to filename-only).
-	Inspected *InspectedMetadata
+	Path       string // ESP-relative path, e.g. /boot/vmlinuz-linux
+	AbsPath    string // absolute filesystem path
+	Filename   string
+	Role       ImageRole
+	KernelName string // empty for microcode
+	Inspected  *InspectedMetadata
 }
 
-// BootSet groups related boot artefacts that compose into a single bootable
-// configuration. The Layout field describes how the slots relate.
-//
-//   - LayoutSplit: Kernel + Initramfs (+ optional Fallback) + shared Microcode.
-//   - LayoutBLS:   Entry (.conf snippet) + Kernel + Initramfs (+ Microcode).
-//   - LayoutUKI:   UKI (self-contained) + optional shared Microcode.
-//
-// Slots not relevant to the layout are nil.
+// BootSet groups the artefacts that make a single bootable configuration.
+// Slots not relevant to the Layout are nil.
 type BootSet struct {
 	KernelName string
 	Layout     BootLayout
 
-	// Split / BLS layouts
-	Kernel    *BootImage
-	Initramfs *BootImage
-	Fallback  *BootImage
+	Kernel    *BootImage // Split / BLS
+	Initramfs *BootImage // Split / BLS
+	Fallback  *BootImage // Split / BLS
 
-	// BLS layout only — the parsed .conf entry; populated by the BLS scanner.
-	// Typed as any to avoid an import cycle with the bls package.
+	// Entry is the parsed BLS .conf for LayoutBLS sets. Typed as any to
+	// avoid an import cycle with the bls package.
 	Entry any
 
-	// UKI layout only
-	UKI *BootImage
+	UKI *BootImage // LayoutUKI
 
-	// Shared across all layouts (loose microcode files on disk). UKIs may
-	// embed microcode in their .ucode section, in which case this is unused.
+	// Microcode is shared across all layouts. UKIs may embed it in .ucode.
 	Microcode []*BootImage
 }
 
-// HasFallback returns whether a fallback initramfs exists for this boot set.
-func (bs *BootSet) HasFallback() bool {
-	return bs.Fallback != nil
-}
+func (bs *BootSet) HasFallback() bool { return bs.Fallback != nil }
 
-// PrimaryImage returns the image that identifies this boot set:
-// the UKI for UKI layouts, otherwise the kernel.
+// PrimaryImage is the UKI for LayoutUKI, the Kernel otherwise — the image
+// from which we read version metadata for staleness checks.
 func (bs *BootSet) PrimaryImage() *BootImage {
 	if bs.Layout == LayoutUKI {
 		return bs.UKI
@@ -253,8 +211,6 @@ func (bs *BootSet) PrimaryImage() *BootImage {
 	return bs.Kernel
 }
 
-// KernelVersion returns the inspected kernel version, or empty string if
-// inspection was not available (triggering filename-only staleness matching).
 func (bs *BootSet) KernelVersion() string {
 	if img := bs.PrimaryImage(); img != nil && img.Inspected != nil {
 		return img.Inspected.Version
@@ -262,9 +218,6 @@ func (bs *BootSet) KernelVersion() string {
 	return ""
 }
 
-// DisplayName returns a human-readable name for this boot set.
-// Uses KernelName with the first letter capitalised (e.g., "linux" -> "Linux",
-// "linux-lts" -> "Linux-lts").
 func (bs *BootSet) DisplayName() string {
 	if bs.KernelName == "" {
 		return "Linux"

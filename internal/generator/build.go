@@ -64,7 +64,7 @@ func (p *Pipeline) BuildPatch(plan *Plan) (*diff.PatchDiff, *OperationSummary, e
 		Int("valid_entries", len(sourceEntries)).
 		Msg("Checking valid entries")
 
-	generator := refind.NewGeneratorWithBootPlans(p.ESPPath, p.Cfg.Advanced.Naming.MenuFormat, p.Cfg.Display.LocalTime, p.KernelScanner, p.BootSets, plan.BootPlans)
+	generator := refind.NewGeneratorWithBootPlans(p.ESPPath, p.Cfg.Advanced.Naming.MenuFormat, p.Cfg.Display.LocalTime.IsTrue(), p.KernelScanner, p.BootSets, plan.BootPlans)
 	refindLinuxEntries, otherEntries := splitSourcesByConfigType(sourceEntries)
 
 	updatedRefindLinuxConf := p.applyRefindLinuxUpdates(generator, refindLinuxEntries, plan, patch, summary)
@@ -184,7 +184,7 @@ func (p *Pipeline) applyRefindLinuxUpdates(gen *refind.Generator, refindLinuxEnt
 // there are menuentry-style sources, or because the user passed
 // --generate-include explicitly.
 func (p *Pipeline) maybeApplyManagedConfig(gen *refind.Generator, parser *refind.Parser, configPath string, otherEntries, sourceEntries []*refind.MenuEntry, updatedRefindLinuxConf bool, plan *Plan, patch *diff.PatchDiff, summary *OperationSummary) {
-	force := p.Cfg.GenerateInclude
+	force := p.Cfg.GenerateInclude.IsTrue()
 	shouldGenerate := (!updatedRefindLinuxConf && len(otherEntries) > 0 && len(plan.ProcessedSnapshots) > 0) || force
 
 	if !shouldGenerate {
@@ -228,5 +228,5 @@ func (p *Pipeline) maybeApplyManagedConfig(gen *refind.Generator, parser *refind
 }
 
 func (p *Pipeline) formatSnapshotName(snapshot *btrfs.Snapshot) string {
-	return btrfs.FormatSnapshotTimeForMenu(snapshot.SnapshotTime, p.Cfg.Advanced.Naming.MenuFormat, p.Cfg.Display.LocalTime)
+	return btrfs.FormatSnapshotTimeForMenu(snapshot.SnapshotTime, p.Cfg.Advanced.Naming.MenuFormat, p.Cfg.Display.LocalTime.IsTrue())
 }

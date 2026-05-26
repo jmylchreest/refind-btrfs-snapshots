@@ -1,11 +1,6 @@
-// Package config defines the typed configuration schema and loader for the
-// refind-btrfs-snapshots tool. Application code reads configuration through
-// the typed Config struct instead of string-keyed lookups.
+// Package config defines the typed configuration schema and loader.
 package config
 
-// Config is the root configuration. Fields with no koanf tag at the top
-// level are bound to top-level YAML keys; nested structs map to YAML
-// sections via their koanf tag.
 type Config struct {
 	Snapshot SnapshotConfig `koanf:"snapshot"`
 	Refind   RefindConfig   `koanf:"refind"`
@@ -18,10 +13,12 @@ type Config struct {
 	List     ListConfig     `koanf:"list"`
 
 	LogLevel        string `koanf:"log_level"`
-	DryRun          bool   `koanf:"dry_run"`
-	Force           bool   `koanf:"force"`
-	GenerateInclude bool   `koanf:"generate_include"`
-	Yes             bool   `koanf:"yes"`
+	DryRun          Truthy `koanf:"dry_run"`
+	Force           Truthy `koanf:"force"`
+	GenerateInclude Truthy `koanf:"generate_include"`
+
+	// AutoApprove binds to --yes / -y (YAML key kept as "yes" for user familiarity).
+	AutoApprove Truthy `koanf:"yes"`
 }
 
 type SnapshotConfig struct {
@@ -38,13 +35,13 @@ type RefindConfig struct {
 
 type ESPConfig struct {
 	UUID       string `koanf:"uuid"`
-	AutoDetect bool   `koanf:"auto_detect"`
+	AutoDetect Truthy `koanf:"auto_detect"`
 	MountPoint string `koanf:"mount_point"`
 }
 
 type BehaviorConfig struct {
-	ExitOnSnapshotBoot  bool `koanf:"exit_on_snapshot_boot"`
-	CleanupOldSnapshots bool `koanf:"cleanup_old_snapshots"`
+	ExitOnSnapshotBoot  Truthy `koanf:"exit_on_snapshot_boot"`
+	CleanupOldSnapshots Truthy `koanf:"cleanup_old_snapshots"`
 }
 
 type KernelConfig struct {
@@ -52,9 +49,8 @@ type KernelConfig struct {
 	BootImagePatterns   []PatternConfig `koanf:"boot_image_patterns"`
 }
 
-// PatternConfig describes how to recognise a boot image file by name.
-// Mirrors kernel.PatternConfig so the config layer doesn't depend on
-// internal/kernel; conversion happens in the command layer.
+// PatternConfig mirrors kernel.PatternConfig so the config package stays
+// independent of internal/kernel; the command layer converts between them.
 type PatternConfig struct {
 	Glob        string `koanf:"glob"`
 	Role        string `koanf:"role"`
@@ -64,18 +60,10 @@ type PatternConfig struct {
 }
 
 type DisplayConfig struct {
-	LocalTime bool `koanf:"local_time"`
+	LocalTime Truthy `koanf:"local_time"`
 }
 
-// UKIConfig controls handling of Unified Kernel Images.
-//
-// SnapshotStrategy decides what to do for ESP-mode UKI boot sets where the
-// UKI's embedded cmdline points at the live root and the systemd-stub
-// ignores boot-loader-supplied cmdline overrides. Btrfs-mode UKI snapshots
-// (UKI inside the snapshot's /boot) are unaffected.
-//
-// Valid values: "skip" (default), "warn", "disable". See docs/USAGE.md
-// section "UKI Snapshots: ESP-mode Caveat".
+// UKIConfig.SnapshotStrategy: see docs/USAGE.md "UKI Snapshots: ESP-mode Caveat".
 type UKIConfig struct {
 	SnapshotStrategy string `koanf:"snapshot_strategy"`
 }
@@ -91,6 +79,6 @@ type NamingConfig struct {
 
 type ListConfig struct {
 	Format   string `koanf:"format"`
-	ShowAll  bool   `koanf:"show_all"`
-	ShowSize bool   `koanf:"show_size"`
+	ShowAll  Truthy `koanf:"show_all"`
+	ShowSize Truthy `koanf:"show_size"`
 }

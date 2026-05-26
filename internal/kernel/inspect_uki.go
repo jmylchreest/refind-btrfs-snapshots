@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// UKI PE section names defined by the systemd-stub specification.
-// See: https://uapi-group.org/specifications/specs/unified_kernel_image/
+// Section names defined by the systemd-stub UKI spec.
+// https://uapi-group.org/specifications/specs/unified_kernel_image/
 const (
 	ukiSectionLinux   = ".linux"
 	ukiSectionInitrd  = ".initrd"
@@ -17,11 +17,8 @@ const (
 	ukiSectionCmdline = ".cmdline"
 )
 
-// InspectUKI parses a Unified Kernel Image (PE/EFI binary) and extracts
-// metadata from the standard systemd-stub sections (.osrel, .uname, .cmdline).
-//
-// Returns an error when the file is not a PE binary, or is a PE without the
-// mandatory .linux section (e.g., an EFI-stub-wrapped vmlinuz which is not a UKI).
+// InspectUKI rejects PE binaries without a .linux section so an
+// EFI-stub-wrapped vmlinuz (also PE) isn't mistaken for a UKI.
 func InspectUKI(path string) (*InspectedMetadata, error) {
 	f, err := pe.Open(path)
 	if err != nil {

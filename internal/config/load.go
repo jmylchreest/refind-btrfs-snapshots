@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"strings"
 
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/confmap"
 	"github.com/knadh/koanf/providers/env/v2"
@@ -72,7 +73,18 @@ func Load(cfgFile string, flagOverrides map[string]any) (*Config, error) {
 	}
 
 	var cfg Config
-	if err := k.Unmarshal("", &cfg); err != nil {
+	if err := k.UnmarshalWithConf("", &cfg, koanf.UnmarshalConf{
+		Tag: "koanf",
+		DecoderConfig: &mapstructure.DecoderConfig{
+			DecodeHook: mapstructure.ComposeDecodeHookFunc(
+				mapstructure.TextUnmarshallerHookFunc(),
+				mapstructure.StringToSliceHookFunc(","),
+			),
+			Metadata:         nil,
+			Result:           &cfg,
+			WeaklyTypedInput: true,
+		},
+	}); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
 

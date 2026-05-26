@@ -2,12 +2,9 @@ package kernel
 
 import "fmt"
 
-// Inspect identifies a boot image's actual format by attempting parsers in
-// order, returning the first that succeeds. The hint role only reorders
-// the attempts (fast path) — every parser still verifies independently, so
-// a wrong hint never produces a false positive.
-//
-// Returns (nil, nil) for roles that have no inspection support (microcode).
+// Inspect tries parsers in hint-biased order and returns the first that
+// succeeds. Each parser still verifies independently, so a wrong hint
+// never produces a false positive.
 func Inspect(path string, hint ImageRole) (*InspectedMetadata, error) {
 	type parser struct {
 		fn func(string) (*InspectedMetadata, error)
@@ -26,12 +23,9 @@ func Inspect(path string, hint ImageRole) (*InspectedMetadata, error) {
 	case RoleInitramfs, RoleFallbackInitramfs:
 		ordered = []parser{initrd, microcode, kern, uki}
 	case RoleMicrocode:
-		// Microcode is the only case where the role label is filename-anchored
-		// (we only get here for exact matches like intel-ucode.img / amd-ucode.img).
-		// Don't fall through to other parsers — the initramfs sniffer is too
-		// permissive and would mislabel a malformed microcode file as "unknown
-		// initramfs". On failure the caller keeps the filename-derived role
-		// with Inspected = nil.
+		// No fall-through: the initramfs sniffer is permissive and would
+		// mislabel a malformed microcode file as "unknown initramfs".
+		// Caller keeps the filename-derived role with Inspected = nil.
 		ordered = []parser{microcode}
 	default:
 		ordered = []parser{uki, kern, initrd, microcode}
