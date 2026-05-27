@@ -21,17 +21,13 @@ import (
 	"os"
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/config"
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/version"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )
 
-var (
-	cfgFile   string
-	Version   = "dev"
-	Commit    = "unknown"
-	BuildTime = "unknown"
-)
+var cfgFile string
 
 // loadedCfg is the resolved configuration for the currently-executing command.
 // Populated by rootCmd.PersistentPreRunE before any subcommand's RunE runs;
@@ -82,16 +78,10 @@ func initLogging(level string) {
 	zerolog.SetGlobalLevel(parsed)
 
 	log.Debug().
-		Str("version", getVersion()).
-		Str("commit", Commit).
-		Str("build_time", BuildTime).
+		Str("version", version.String()).
+		Str("commit", version.Commit).
+		Str("build_time", version.BuildTime).
 		Str("log_level", level).
 		Msg("Logger initialized")
 }
 
-func getVersion() string {
-	if Version != "" {
-		return Version
-	}
-	return "dev"
-}

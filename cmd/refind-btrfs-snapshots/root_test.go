@@ -34,28 +34,6 @@ func TestInitLogging(t *testing.T) {
 	}
 }
 
-func TestGetVersion(t *testing.T) {
-	tests := []struct {
-		name         string
-		versionValue string
-		expected     string
-	}{
-		{"version_set", "1.2.3", "1.2.3"},
-		{"version_empty", "", "dev"},
-		{"version_dev", "dev", "dev"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			originalVersion := Version
-			Version = tt.versionValue
-			defer func() { Version = originalVersion }()
-
-			assert.Equal(t, tt.expected, getVersion())
-		})
-	}
-}
-
 func TestExecute(t *testing.T) {
 	originalArgs := os.Args
 	defer func() { os.Args = originalArgs }()

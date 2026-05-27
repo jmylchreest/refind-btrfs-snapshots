@@ -679,7 +679,7 @@ cd refind-btrfs-snapshots
 go build -o refind-btrfs-snapshots ./cmd/refind-btrfs-snapshots
 
 # With version info
-go build -ldflags "-X main.Version=v1.0.0" \
+go build -ldflags "-X github.com/jmylchreest/refind-btrfs-snapshots/internal/version.Version=v1.0.0" \
   -o refind-btrfs-snapshots ./cmd/refind-btrfs-snapshots
 ```
 

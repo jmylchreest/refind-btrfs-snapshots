@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"runtime"
 
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -25,8 +26,8 @@ func init() {
 }
 
 func runVersion(cmd *cobra.Command, args []string) {
-	fmt.Printf("refind-btrfs-snapshots %s\n", getVersion())
-	fmt.Printf("Commit: %s\n", Commit)
-	fmt.Printf("Built: %s\n", BuildTime)
+	fmt.Printf("refind-btrfs-snapshots %s\n", version.String())
+	fmt.Printf("Commit: %s\n", version.Commit)
+	fmt.Printf("Built: %s\n", version.BuildTime)
 	fmt.Printf("Go version: %s\n", runtime.Version())
 }
