@@ -1,4 +1,4 @@
-package cmd
+package main
 
 import (
 	"os/user"
@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/kernel"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/refind"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -505,6 +506,35 @@ func TestConfigPathResolution(t *testing.T) {
 			}
 
 			assert.Equal(t, tt.expected, resolvedPath, tt.description)
+		})
+	}
+}
+
+func TestBootSetLayoutLabels(t *testing.T) {
+	tests := []struct {
+		name     string
+		sets     []*kernel.BootSet
+		expected []string
+	}{
+		{
+			name:     "empty",
+			sets:     nil,
+			expected: []string{},
+		},
+		{
+			name: "mixed_layouts",
+			sets: []*kernel.BootSet{
+				{KernelName: "linux", Layout: kernel.LayoutSplit},
+				{KernelName: "linux-lts", Layout: kernel.LayoutBLS},
+				{KernelName: "linux-zen", Layout: kernel.LayoutUKI},
+			},
+			expected: []string{"linux:split", "linux-lts:bls", "linux-zen:uki"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, bootSetLayoutLabels(tt.sets))
 		})
 	}
 }

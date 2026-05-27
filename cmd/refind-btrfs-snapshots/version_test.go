@@ -1,4 +1,4 @@
-package cmd
+package main
 
 import (
 	"io"
@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/version"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -14,13 +15,13 @@ import (
 // worth testing: that it writes the four expected lines with the build
 // metadata values substituted in.
 func TestRunVersion_OutputFormat(t *testing.T) {
-	originalVersion, originalCommit, originalBuildTime := Version, Commit, BuildTime
+	originalVersion, originalCommit, originalBuildTime := version.Version, version.Commit, version.BuildTime
 	t.Cleanup(func() {
-		Version, Commit, BuildTime = originalVersion, originalCommit, originalBuildTime
+		version.Version, version.Commit, version.BuildTime = originalVersion, originalCommit, originalBuildTime
 	})
-	Version = "1.2.3"
-	Commit = "abcdef1"
-	BuildTime = "2026-01-01T00:00:00Z"
+	version.Version = "1.2.3"
+	version.Commit = "abcdef1"
+	version.BuildTime = "2026-01-01T00:00:00Z"
 
 	output := captureStdout(t, func() { runVersion(nil, nil) })
 

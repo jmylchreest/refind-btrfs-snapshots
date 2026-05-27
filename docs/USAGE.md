@@ -676,11 +676,11 @@ Until additional bootloader generators are implemented, the `kernel-spy` develop
 ```bash
 git clone https://github.com/jmylchreest/refind-btrfs-snapshots.git
 cd refind-btrfs-snapshots
-go build -o refind-btrfs-snapshots
+go build -o refind-btrfs-snapshots ./cmd/refind-btrfs-snapshots
 
 # With version info
-go build -ldflags "-X github.com/jmylchreest/refind-btrfs-snapshots/cmd.Version=v1.0.0" \
-  -o refind-btrfs-snapshots
+go build -ldflags "-X github.com/jmylchreest/refind-btrfs-snapshots/internal/version.Version=v1.0.0" \
+  -o refind-btrfs-snapshots ./cmd/refind-btrfs-snapshots
 ```
 
 ### Testing

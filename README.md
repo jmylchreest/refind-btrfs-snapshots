@@ -44,7 +44,7 @@ sudo curl -L -o /usr/lib/systemd/system/refind-btrfs-snapshots.path \
 ```bash
 git clone https://github.com/jmylchreest/refind-btrfs-snapshots.git
 cd refind-btrfs-snapshots
-go build -o refind-btrfs-snapshots
+go build -o refind-btrfs-snapshots ./cmd/refind-btrfs-snapshots
 sudo cp refind-btrfs-snapshots /usr/bin/
 sudo cp configs/refind-btrfs-snapshots.yaml /etc/refind-btrfs-snapshots.yaml
 sudo cp systemd/*.{service,path} /etc/systemd/system/

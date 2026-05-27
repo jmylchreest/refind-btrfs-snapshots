@@ -1,11 +1,13 @@
-package cmd
+package main
 
 import (
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/kernel"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -404,5 +406,64 @@ func TestListCommandFlags(t *testing.T) {
 	volumeFlag := snapshotsCommand.Flags().Lookup("volume")
 	require.NotNil(t, volumeFlag)
 	assert.Equal(t, "", volumeFlag.DefValue)
+}
+
+// makeBootSet builds a synthetic BootSet for renderer tests. Layout drives
+// which image slots are populated to match how the real scanner assembles sets.
+func makeBootSet(kernelName string, layout kernel.BootLayout) *kernel.BootSet {
+	bs := &kernel.BootSet{KernelName: kernelName, Layout: layout}
+	switch layout {
+	case kernel.LayoutUKI:
+		bs.UKI = &kernel.BootImage{Path: "/EFI/Linux/" + kernelName + ".efi", Filename: kernelName + ".efi", Role: kernel.RoleUKI}
+	default:
+		bs.Kernel = &kernel.BootImage{Path: "/vmlinuz-" + kernelName, Filename: "vmlinuz-" + kernelName, Role: kernel.RoleKernel}
+		bs.Initramfs = &kernel.BootImage{Path: "/initramfs-" + kernelName + ".img", Filename: "initramfs-" + kernelName + ".img", Role: kernel.RoleInitramfs}
+	}
+	return bs
+}
+
+func TestOutputBootsetsTable_LayoutAndUKI(t *testing.T) {
+	sets := []*kernel.BootSet{
+		makeBootSet("linux", kernel.LayoutSplit),
+		makeBootSet("linux-lts", kernel.LayoutBLS),
+		makeBootSet("linux-zen", kernel.LayoutUKI),
+	}
+
+	out := captureStdout(t, func() {
+		require.NoError(t, outputBootsetsTable(sets, nil, false))
+	})
+
+	assert.Contains(t, out, "Layout:         split")
+	assert.Contains(t, out, "Layout:         bls")
+	assert.Contains(t, out, "Layout:         uki")
+	assert.Contains(t, out, "UKI:            /EFI/Linux/linux-zen.efi",
+		"UKI sets render a UKI: line in place of Kernel/Initramfs")
+	assert.Contains(t, out, "Kernel:         /vmlinuz-linux",
+		"Split/BLS sets still render Kernel: lines")
+}
+
+func TestOutputBootsetsJSON_LayoutAndUKI(t *testing.T) {
+	sets := []*kernel.BootSet{
+		makeBootSet("linux", kernel.LayoutSplit),
+		makeBootSet("linux-zen", kernel.LayoutUKI),
+	}
+
+	out := captureStdout(t, func() {
+		require.NoError(t, outputBootsetsJSON(sets, nil, false))
+	})
+
+	var parsed struct {
+		BootSets []bootSetJSON `json:"boot_sets"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &parsed))
+	require.Len(t, parsed.BootSets, 2)
+
+	assert.Equal(t, "split", parsed.BootSets[0].Layout)
+	assert.Nil(t, parsed.BootSets[0].UKI, "Split sets must not populate uki")
+	assert.NotNil(t, parsed.BootSets[0].Kernel)
+
+	assert.Equal(t, "uki", parsed.BootSets[1].Layout)
+	require.NotNil(t, parsed.BootSets[1].UKI, "UKI sets must populate uki")
+	assert.Equal(t, "/EFI/Linux/linux-zen.efi", parsed.BootSets[1].UKI.Path)
 }
 

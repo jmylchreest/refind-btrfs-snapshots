@@ -17,14 +17,10 @@
 
 package main
 
-import (
-	"os"
-
-	"github.com/jmylchreest/refind-btrfs-snapshots/cmd"
-)
+import "os"
 
 func main() {
-	if err := cmd.Execute(); err != nil {
+	if err := Execute(); err != nil {
 		os.Exit(1)
 	}
 }
