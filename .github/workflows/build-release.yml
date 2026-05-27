@@ -113,9 +113,9 @@ jobs:
           files: ./coverage.out
         continue-on-error: true
 
-  # ─── Stage 3: Build (linux/amd64 + linux/arm64) ───────────────────────
+  # ─── Stage 3: Build (refind + bls × linux/amd64 + linux/arm64) ────────
   build:
-    name: Build (linux/${{ matrix.goarch }})
+    name: Build ${{ matrix.binary.name }} (linux/${{ matrix.goarch }})
     runs-on: ubuntu-latest
     needs: [prepare, test]
     if: needs.prepare.outputs.should_skip != 'true' && github.event_name == 'push'
@@ -123,6 +123,9 @@ jobs:
       fail-fast: false
       matrix:
         goarch: [amd64, arm64]
+        binary:
+          - { name: refind-btrfs-snapshots, path: ./cmd/refind-btrfs-snapshots, config: configs/refind-btrfs-snapshots.yaml, systemd: true }
+          - { name: bls-btrfs-snapshots,    path: ./cmd/bls-btrfs-snapshots,    config: configs/bls-btrfs-snapshots.yaml,    systemd: false }
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -147,31 +150,44 @@ jobs:
             -X 'github.com/jmylchreest/refind-btrfs-snapshots/internal/version.Version=${VERSION}' \
             -X 'github.com/jmylchreest/refind-btrfs-snapshots/internal/version.Commit=${COMMIT}' \
             -X 'github.com/jmylchreest/refind-btrfs-snapshots/internal/version.BuildTime=${DATE}'" \
-            -o "dist/refind-btrfs-snapshots" ./cmd/refind-btrfs-snapshots
+            -o "dist/${{ matrix.binary.name }}" ${{ matrix.binary.path }}
 
       - name: Prepare distribution
         run: |
           mkdir -p dist/assets
+          BIN=${{ matrix.binary.name }}
+          ARCH=${{ matrix.goarch }}
+          VER=${{ needs.prepare.outputs.version }}
 
-          # Standalone binary (for -bin AUR package)
-          cp dist/refind-btrfs-snapshots dist/assets/refind-btrfs-snapshots-linux-${{ matrix.goarch }}
+          # Standalone binary (consumed by the refind -bin AUR package; published
+          # alongside the tarball for direct download for all binaries).
+          cp dist/$BIN dist/assets/${BIN}-linux-${ARCH}
 
-          # Archive with configs and systemd units
-          tar czf "dist/assets/refind-btrfs-snapshots_${{ needs.prepare.outputs.version }}_linux_${{ matrix.goarch }}.tar.gz" \
-            -C dist refind-btrfs-snapshots \
-            -C "${{ github.workspace }}" configs/ systemd/ LICENSE
+          # Tarball: binary + per-binary config + LICENSE, plus systemd units
+          # for binaries that ship them. Built via a staging dir so the archive
+          # layout is predictable and unrelated configs aren't bundled.
+          STAGE="dist/stage-${BIN}-${ARCH}"
+          mkdir -p "$STAGE/configs"
+          cp dist/$BIN "$STAGE/"
+          cp ${{ matrix.binary.config }} "$STAGE/configs/"
+          cp LICENSE "$STAGE/"
+          if [[ "${{ matrix.binary.systemd }}" == "true" ]]; then
+            cp -r systemd "$STAGE/"
+          fi
+
+          tar czf "dist/assets/${BIN}_${VER}_linux_${ARCH}.tar.gz" -C "$STAGE" .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
-          name: refind-btrfs-snapshots_linux_${{ matrix.goarch }}
+          name: ${{ matrix.binary.name }}_linux_${{ matrix.goarch }}
           path: dist/assets/*
           if-no-files-found: error
           retention-days: 1
 
   # ─── Stage 3b: Build check for PRs (no artifacts) ──────────────────────
   build-check:
-    name: Build Check (linux/${{ matrix.goarch }})
+    name: Build Check ${{ matrix.binary }} (linux/${{ matrix.goarch }})
     runs-on: ubuntu-latest
     needs: [prepare, test]
     if: needs.prepare.outputs.should_skip != 'true' && github.event_name == 'pull_request'
@@ -179,6 +195,7 @@ jobs:
       fail-fast: false
       matrix:
         goarch: [amd64, arm64]
+        binary: [refind-btrfs-snapshots, bls-btrfs-snapshots]
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -195,7 +212,7 @@ jobs:
           GOOS: linux
           GOARCH: ${{ matrix.goarch }}
         run: |
-          go build -ldflags "-s -w" -o /dev/null ./cmd/refind-btrfs-snapshots
+          go build -ldflags "-s -w" -o /dev/null ./cmd/${{ matrix.binary }}
 
   # ─── Stage 4: Create Release ──────────────────────────────────────────
   release:
@@ -224,7 +241,7 @@ jobs:
           cp systemd/refind-btrfs-snapshots.path release/
 
           # Move all build artifacts to release folder
-          find artifacts -type f \( -name "*.tar.gz" -o -name "refind-btrfs-snapshots-linux-*" \) -exec mv {} release/ \;
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*-btrfs-snapshots-linux-*" \) -exec mv {} release/ \;
 
           echo "=== Release assets ==="
           ls -la release/
@@ -409,5 +426,6 @@ jobs:
         with:
           name: |
             refind-btrfs-snapshots_linux_*
+            bls-btrfs-snapshots_linux_*
             checksums
           failOnError: false
