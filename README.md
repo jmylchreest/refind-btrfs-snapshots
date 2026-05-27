@@ -115,10 +115,7 @@ Yes. If your system transitioned between boot configurations over time, older sn
 
 **Q: I use Unified Kernel Images (UKIs). Are they supported?**
 
-Yes — UKIs (BLS Type #2) are discovered and inspected automatically. Behaviour depends on where the UKI lives:
-
-- **Inside the snapshot's `/boot/EFI/Linux/`** (btrfs mode): fully supported. Each snapshot's UKI has its own embedded cmdline pointing at that snapshot.
-- **On the ESP** (`<esp>/EFI/Linux/`): the UKI's embedded cmdline points at the *live* root, and the systemd-stub ignores boot-loader-supplied cmdline on standard UKIs — so a snapshot boot entry would actually boot live root. By default we **skip** these (`uki.snapshot_strategy: skip`). Set to `warn` or `disable` if you'd rather see them in the menu. See [Boot Layouts](docs/USAGE.md#boot-layouts) for the full explanation.
+UKIs are **discovered and inspected** — they appear in `list bootsets`, `status`, and `kernel-spy`, and their embedded kernel version participates in staleness detection. We do **not** make snapshots bootable for UKI boot sets: a UKI's cmdline lives in its signed `.cmdline` PE section, and there's no general boot-loader-side override, so producing a snapshot boot entry would require rewriting (and re-signing under Secure Boot) the UKI per snapshot. That's tracked as a planned standalone `uki-btrfs-snapshots` binary — see [`docs/WISHLIST.md`](docs/WISHLIST.md).
 
 **Q: I use systemd-boot's BLS `.conf` files. Do they affect anything?**
 
