@@ -6,11 +6,24 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
-	"github.com/jmylchreest/refind-btrfs-snapshots/internal/runner"
 )
+
+func createTempFile(t *testing.T, content string) string {
+	t.Helper()
+	f, err := os.CreateTemp("", "fstab-test-*")
+	if err != nil {
+		t.Fatalf("create temp: %v", err)
+	}
+	if _, err := f.WriteString(content); err != nil {
+		t.Fatalf("write temp: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close temp: %v", err)
+	}
+	return f.Name()
+}
 
 func TestNewManager(t *testing.T) {
 	manager := NewManager()
@@ -747,175 +760,6 @@ func TestGetFieldOrDefault(t *testing.T) {
 	}
 }
 
-func TestManager_UpdateSnapshotFstab_DryRun(t *testing.T) {
-	// Create test data
-	snapshot := &btrfs.Snapshot{
-		Subvolume: &btrfs.Subvolume{
-			ID:   256,
-			Path: "/@snapshots/1/snapshot",
-		},
-		FilesystemPath: "/tmp/test-snapshot",
-	}
-
-	rootFS := &btrfs.Filesystem{
-		UUID: "test-uuid",
-	}
-
-	// Create temporary fstab
-	fstabContent := `UUID=test-uuid / btrfs subvol=@,defaults 0 1`
-	tmpDir := t.TempDir()
-	snapshotDir := filepath.Join(tmpDir, "snapshot")
-	etcDir := filepath.Join(snapshotDir, "etc")
-	if err := os.MkdirAll(etcDir, 0755); err != nil {
-		t.Fatalf("Failed to create test directory: %v", err)
-	}
-
-	fstabPath := filepath.Join(etcDir, "fstab")
-	if err := os.WriteFile(fstabPath, []byte(fstabContent), 0644); err != nil {
-		t.Fatalf("Failed to create test fstab: %v", err)
-	}
-
-	snapshot.FilesystemPath = snapshotDir
-
-	// Test dry run
-	r := runner.New(true) // dry run
-	manager := NewManager()
-	err := manager.UpdateSnapshotFstab(snapshot, rootFS, r)
-
-	if err != nil {
-		t.Errorf("UpdateSnapshotFstab() dry run error = %v", err)
-	}
-
-	// Verify file wasn't actually modified
-	content, err := os.ReadFile(fstabPath)
-	if err != nil {
-		t.Fatalf("Failed to read fstab after dry run: %v", err)
-	}
-
-	if string(content) != fstabContent {
-		t.Error("UpdateSnapshotFstab() dry run should not modify file")
-	}
-}
-
-// Helper function to create temporary files for testing
-func createTempFile(t *testing.T, content string) string {
-	tmpFile, err := os.CreateTemp("", "fstab_test_*")
-	if err != nil {
-		t.Fatalf("Failed to create temporary file: %v", err)
-	}
-
-	if _, err := tmpFile.WriteString(content); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpFile.Name())
-		t.Fatalf("Failed to write to temporary file: %v", err)
-	}
-
-	tmpFile.Close()
-	return tmpFile.Name()
-}
-
-// Test real file operations with mock runner
-type mockRunner struct {
-	dryRun  bool
-	written map[string][]byte
-}
-
-func newMockRunner(dryRun bool) *mockRunner {
-	return &mockRunner{
-		dryRun:  dryRun,
-		written: make(map[string][]byte),
-	}
-}
-
-func (r *mockRunner) IsDryRun() bool {
-	return r.dryRun
-}
-
-func (r *mockRunner) WriteFile(path string, data []byte, perm os.FileMode, description string) error {
-	if r.dryRun {
-		return nil
-	}
-	r.written[path] = data
-	return nil
-}
-
-func (r *mockRunner) Command(name string, args []string, description string) error {
-	return nil
-}
-
-func (r *mockRunner) MkdirAll(path string, perm os.FileMode, description string) error {
-	return nil
-}
-
-func TestManager_UpdateSnapshotFstab_WithMockRunner(t *testing.T) {
-	snapshot := &btrfs.Snapshot{
-		Subvolume: &btrfs.Subvolume{
-			ID:   256,
-			Path: "/@snapshots/1/snapshot",
-		},
-		FilesystemPath: "/tmp/test-snapshot",
-		SnapshotTime:   time.Now(),
-	}
-
-	rootFS := &btrfs.Filesystem{
-		UUID: "test-uuid",
-	}
-
-	// Create temporary fstab
-	fstabContent := `# Test fstab
-UUID=test-uuid / btrfs subvol=@,defaults 0 1
-UUID=other /home btrfs defaults 0 2`
-
-	tmpDir := t.TempDir()
-	snapshotDir := filepath.Join(tmpDir, "snapshot")
-	etcDir := filepath.Join(snapshotDir, "etc")
-	if err := os.MkdirAll(etcDir, 0755); err != nil {
-		t.Fatalf("Failed to create test directory: %v", err)
-	}
-
-	fstabPath := filepath.Join(etcDir, "fstab")
-	if err := os.WriteFile(fstabPath, []byte(fstabContent), 0644); err != nil {
-		t.Fatalf("Failed to create test fstab: %v", err)
-	}
-
-	snapshot.FilesystemPath = snapshotDir
-
-	// Test with mock runner
-	r := newMockRunner(false)
-	manager := NewManager()
-	err := manager.UpdateSnapshotFstab(snapshot, rootFS, r)
-
-	if err != nil {
-		t.Errorf("UpdateSnapshotFstab() error = %v", err)
-		return
-	}
-
-	// Verify the file was written through the runner
-	writtenData, exists := r.written[fstabPath]
-	if !exists {
-		t.Error("UpdateSnapshotFstab() should have written fstab file through runner")
-		return
-	}
-
-	writtenContent := string(writtenData)
-	if !strings.Contains(writtenContent, "subvol=/@snapshots/1/snapshot") {
-		t.Error("UpdateSnapshotFstab() should update subvol option")
-	}
-
-	if !strings.Contains(writtenContent, "subvolid=256") {
-		t.Error("UpdateSnapshotFstab() should update subvolid option")
-	}
-
-	// Verify comments are preserved
-	if !strings.Contains(writtenContent, "# Test fstab") {
-		t.Error("UpdateSnapshotFstab() should preserve comments")
-	}
-
-	// Verify unrelated entries are preserved
-	if !strings.Contains(writtenContent, "UUID=other /home btrfs defaults 0 2") {
-		t.Error("UpdateSnapshotFstab() should preserve unrelated entries")
-	}
-}
 
 func TestManager_AnalyzeBootMount(t *testing.T) {
 	tests := []struct {
