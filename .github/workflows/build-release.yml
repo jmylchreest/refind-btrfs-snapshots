@@ -125,7 +125,7 @@ jobs:
         goarch: [amd64, arm64]
         binary:
           - { name: refind-btrfs-snapshots, path: ./cmd/refind-btrfs-snapshots, config: configs/refind-btrfs-snapshots.yaml, systemd: true }
-          - { name: bls-btrfs-snapshots,    path: ./cmd/bls-btrfs-snapshots,    config: configs/bls-btrfs-snapshots.yaml,    systemd: false }
+          - { name: bls-btrfs-snapshots,    path: ./cmd/bls-btrfs-snapshots,    config: configs/bls-btrfs-snapshots.yaml,    systemd: true }
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -172,7 +172,8 @@ jobs:
           cp ${{ matrix.binary.config }} "$STAGE/configs/"
           cp LICENSE "$STAGE/"
           if [[ "${{ matrix.binary.systemd }}" == "true" ]]; then
-            cp -r systemd "$STAGE/"
+            mkdir -p "$STAGE/systemd"
+            cp systemd/${BIN}.* "$STAGE/systemd/"
           fi
 
           tar czf "dist/assets/${BIN}_${VER}_linux_${ARCH}.tar.gz" -C "$STAGE" .
