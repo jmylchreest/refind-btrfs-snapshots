@@ -1,0 +1,32 @@
+# bls-btrfs-snapshots configuration
+#
+# Writes Boot Loader Specification Type #1 entries to <esp>/loader/entries/,
+# consumed by systemd-boot and BLS-aware GRUB. rEFInd users should run
+# refind-btrfs-snapshots instead.
+#
+# Discovery settings (snapshot search dirs, ESP detection, kernel patterns)
+# default to the same values as refind-btrfs-snapshots — they live in the
+# code and only need to appear here if you want to override them. The full
+# reference is configs/refind-btrfs-snapshots.yaml.
+#
+# Spec: https://uapi-group.org/specifications/specs/boot_loader_specification/
+
+# BLS output
+bls:
+  # Toggle the writer. Off by default so installing the binary alone is
+  # never enough to produce changes — opt in explicitly.
+  write_entries: true
+
+  # Where entries go. Absolute path relative to the ESP root.
+  entries_dir: "/loader/entries"
+
+  # Prefix that identifies entries managed by this tool. Orphans matching
+  # this prefix get cleaned up automatically when their snapshot disappears.
+  entry_prefix: "bls-btrfs-snapshots-"
+
+# Behaviour
+behavior:
+  exit_on_snapshot_boot: true
+
+# Logging
+log_level: "info"

@@ -114,6 +114,16 @@ uki:
   #   "disable" - Generate the entry with rEFInd's 'disabled' directive (visible but not bootable)
   snapshot_strategy: "skip"
 
+# BLS Type #1 entry output (consumed by the bls-btrfs-snapshots binary).
+# rEFInd does NOT read these; refind-btrfs-snapshots ignores this block.
+# Disabled by default. Only ESP-mode snapshots are emitted — systemd-boot
+# and BLS-GRUB cannot traverse btrfs subvolumes to reach kernels inside a
+# snapshot. See https://uapi-group.org/specifications/specs/boot_loader_specification/
+bls:
+  write_entries: false
+  entries_dir: "/loader/entries"
+  entry_prefix: "bls-btrfs-snapshots-"
+
 # Advanced Options
 advanced:
   # Snapshot naming configuration

@@ -30,6 +30,11 @@ func Defaults() Config {
 		UKI: UKIConfig{
 			SnapshotStrategy: "skip",
 		},
+		BLS: BLSConfig{
+			WriteEntries: Truthy(false),
+			EntriesDir:   "/loader/entries",
+			EntryPrefix:  "bls-btrfs-snapshots-",
+		},
 		Advanced: AdvancedConfig{
 			Naming: NamingConfig{
 				RwsnapFormat: "2006-01-02_15-04-05",
