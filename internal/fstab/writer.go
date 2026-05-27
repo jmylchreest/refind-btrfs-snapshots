@@ -3,19 +3,7 @@ package fstab
 import (
 	"fmt"
 	"strings"
-
-	"github.com/jmylchreest/refind-btrfs-snapshots/internal/runner"
 )
-
-// writeFstabWithRunner writes an fstab structure back to a file using runner, preserving formatting of unchanged lines
-func (m *Manager) writeFstabWithRunner(path string, fstab *Fstab, modifiedEntries map[string]bool, r runner.Runner) error {
-	content, err := m.generateFstabContentWithModifications(fstab, modifiedEntries)
-	if err != nil {
-		return fmt.Errorf("failed to generate fstab content: %w", err)
-	}
-
-	return r.WriteFile(path, []byte(content), 0644, fmt.Sprintf("Update snapshot fstab: %s", path))
-}
 
 // generateFstabContentWithModifications generates fstab content, only reformatting modified entries
 func (m *Manager) generateFstabContentWithModifications(fstab *Fstab, modifiedEntries map[string]bool) (string, error) {

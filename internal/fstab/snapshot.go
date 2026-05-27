@@ -9,14 +9,8 @@ import (
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/diff"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/params"
-	"github.com/jmylchreest/refind-btrfs-snapshots/internal/runner"
 	"github.com/rs/zerolog/log"
 )
-
-// UpdateSnapshotFstab updates the fstab file in a snapshot to reflect the snapshot's subvolume
-func (m *Manager) UpdateSnapshotFstab(snapshot *btrfs.Snapshot, rootFS *btrfs.Filesystem, r runner.Runner) error {
-	return m.updateSnapshotFstab(snapshot, rootFS, r, false)
-}
 
 // UpdateSnapshotFstabDiff generates a diff for fstab changes without applying them
 func (m *Manager) UpdateSnapshotFstabDiff(snapshot *btrfs.Snapshot, rootFS *btrfs.Filesystem) (*diff.FileDiff, error) {
@@ -69,74 +63,6 @@ func (m *Manager) UpdateSnapshotFstabDiff(snapshot *btrfs.Snapshot, rootFS *btrf
 		Modified: newContent,
 		IsNew:    false,
 	}, nil
-}
-
-// updateSnapshotFstab updates the fstab file in a snapshot to reflect the snapshot's subvolume
-func (m *Manager) updateSnapshotFstab(snapshot *btrfs.Snapshot, rootFS *btrfs.Filesystem, r runner.Runner, askConfirmation bool) error {
-	fstabPath := btrfs.GetSnapshotFstabPath(snapshot)
-	log.Debug().Str("path", fstabPath).Str("snapshot", snapshot.Path).Msg("Updating snapshot fstab")
-
-	if _, err := os.Stat(fstabPath); errors.Is(err, os.ErrNotExist) {
-		log.Warn().Str("path", fstabPath).Msg("Fstab file does not exist in snapshot")
-		return nil
-	}
-
-	originalContent, err := os.ReadFile(fstabPath)
-	if err != nil {
-		return fmt.Errorf("failed to read original fstab: %w", err)
-	}
-
-	fstab, err := m.ParseFstab(fstabPath)
-	if err != nil {
-		return fmt.Errorf("failed to parse snapshot fstab: %w", err)
-	}
-
-	modified := false
-	modifiedEntries := make(map[string]bool)
-	for _, entry := range fstab.Entries {
-		if m.isRootMount(entry, rootFS) {
-			if m.updateRootEntry(entry, snapshot, rootFS) {
-				modified = true
-				modifiedEntries[entry.Original] = true
-			}
-		}
-	}
-
-	if !modified {
-		log.Debug().Str("path", fstabPath).Msg("No changes needed in fstab")
-		return nil
-	}
-
-	newContent, err := m.generateFstabContentWithModifications(fstab, modifiedEntries)
-	if err != nil {
-		return fmt.Errorf("failed to generate fstab content: %w", err)
-	}
-
-	fileDiff := &diff.FileDiff{
-		Path:     fstabPath,
-		Original: string(originalContent),
-		Modified: newContent,
-		IsNew:    false,
-	}
-
-	if r.IsDryRun() {
-		diff.ShowDiff(fileDiff)
-		log.Info().Str("path", fstabPath).Msg("[DRY RUN] Would update snapshot fstab")
-		return nil
-	}
-
-	if askConfirmation {
-		if !diff.ConfirmChanges(fileDiff, false) {
-			log.Info().Str("path", fstabPath).Msg("Skipped updating snapshot fstab (user declined)")
-			return nil
-		}
-	}
-
-	if err := m.writeFstabWithRunner(fstabPath, fstab, modifiedEntries, r); err != nil {
-		return fmt.Errorf("failed to write updated fstab: %w", err)
-	}
-
-	return nil
 }
 
 // isRootMount determines if an fstab entry is for the root filesystem

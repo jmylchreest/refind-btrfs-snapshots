@@ -9,6 +9,7 @@ import (
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/diff"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/refind"
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/snapshotfs"
 	"github.com/rs/zerolog/log"
 )
 
@@ -35,16 +36,9 @@ func (p *Pipeline) BuildPatch(plan *Plan) (*diff.PatchDiff, *OperationSummary, e
 		}
 	}
 
-	for _, snapshot := range plan.ProcessedSnapshots {
-		fileDiff, err := p.Fstab.UpdateSnapshotFstabDiff(snapshot, plan.RootFS)
-		if err != nil {
-			log.Warn().Err(err).Str("snapshot", snapshot.Path).Msg("Failed to update snapshot fstab")
-			continue
-		}
-		if fileDiff != nil {
-			patch.AddFile(fileDiff)
-			summary.UpdatedFstabs = append(summary.UpdatedFstabs, snapshot.Path+"/etc/fstab")
-		}
+	for _, u := range snapshotfs.UpdateFstabs(plan.ProcessedSnapshots, plan.RootFS, p.Fstab) {
+		patch.AddFile(u.Diff)
+		summary.UpdatedFstabs = append(summary.UpdatedFstabs, u.Snapshot.Path+"/etc/fstab")
 	}
 
 	refindParser := refind.NewParserWithScanner(p.ESPPath, p.KernelScanner)
