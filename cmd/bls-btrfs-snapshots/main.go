@@ -34,17 +34,33 @@ func init() {
 }
 
 func setupLogging(cmd *cobra.Command, args []string) error {
-	level, _ := cmd.Flags().GetString("log-level")
+	level := levelFromFlagThenConfig(cmd)
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 	if level != "" {
 		parsed, err := zerolog.ParseLevel(level)
 		if err != nil {
-			return fmt.Errorf("invalid --log-level %q: %w", level, err)
+			return fmt.Errorf("invalid log level %q: %w", level, err)
 		}
 		zerolog.SetGlobalLevel(parsed)
 	}
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: "15:04:05"})
 	return nil
+}
+
+// levelFromFlagThenConfig returns --log-level if explicitly set, otherwise
+// reads log_level from the YAML config (so users can pin a default without
+// always passing the flag). Errors during config load are non-fatal here —
+// runGenerate re-loads and surfaces the real error.
+func levelFromFlagThenConfig(cmd *cobra.Command) string {
+	if cmd.Flags().Changed("log-level") {
+		v, _ := cmd.Flags().GetString("log-level")
+		return v
+	}
+	cfg, err := loadConfig(cmd)
+	if err != nil {
+		return ""
+	}
+	return cfg.LogLevel
 }
 
 func main() {

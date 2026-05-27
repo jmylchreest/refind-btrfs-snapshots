@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/bootloader"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
@@ -93,7 +92,7 @@ func (g *generator) buildExpected(input bootloader.Input, entriesDir, prefix str
 				continue
 			}
 
-			entry := newEntryFromSource(snap, src, snapshotDisplayName(snap))
+			entry := newEntryFromSource(snap, src, snapshotDisplayName(snap, input.Cfg.Advanced.Naming.MenuFormat, input.Cfg.Display.LocalTime.IsTrue()))
 			if entry == nil {
 				continue
 			}
@@ -213,13 +212,21 @@ func (g *generator) findOrphans(entriesDir, prefix string, expected map[string]*
 	return orphans, nil
 }
 
-// snapshotDisplayName matches the rEFInd generator's snapshot display
-// convention so labels read the same across both binaries.
-func snapshotDisplayName(snap *btrfs.Snapshot) string {
+// snapshotDisplayName mirrors the rEFInd generator's getSnapshotDisplayName
+// so labels read the same across both binaries: rwsnap_<ts>_<id> directory
+// names yield the embedded timestamp; everything else formats SnapshotTime
+// through the user's menu_format + local_time settings.
+func snapshotDisplayName(snap *btrfs.Snapshot, menuFormat string, useLocalTime bool) string {
 	if snap == nil {
 		return ""
 	}
-	return snap.SnapshotTime.UTC().Format(time.RFC3339)
+	if base := filepath.Base(snap.Path); strings.HasPrefix(base, "rwsnap_") {
+		parts := strings.Split(base, "_")
+		if len(parts) >= 3 {
+			return strings.Join(parts[1:len(parts)-1], "_")
+		}
+	}
+	return btrfs.FormatSnapshotTimeForMenu(snap.SnapshotTime, menuFormat, useLocalTime)
 }
 
 // slugify produces a filesystem-friendly identifier from a free-form title:

@@ -213,3 +213,45 @@ func TestBLSGenerator_NameAndUpdatedConfigs(t *testing.T) {
 	require.NotEmpty(t, out.UpdatedConfigs, "UpdatedConfigs should list the entries dir")
 	assert.Contains(t, out.UpdatedConfigs[0], "/loader/entries")
 }
+
+func TestSnapshotDisplayName(t *testing.T) {
+	ts := time.Date(2026, 5, 27, 16, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name         string
+		path         string
+		menuFormat   string
+		useLocalTime bool
+		want         string
+	}{
+		{
+			name:       "default_menu_format_utc",
+			path:       "/.snapshots/8064/snapshot",
+			menuFormat: "2006-01-02T15:04:05Z",
+			want:       "2026-05-27T16:00:00Z",
+		},
+		{
+			name:       "custom_menu_format_friendly_placeholders",
+			path:       "/.snapshots/8064/snapshot",
+			menuFormat: "YYYY/MM/DD HH:mm",
+			want:       "2026/05/27 16:00",
+		},
+		{
+			name:       "rwsnap_prefix_extracts_embedded_timestamp",
+			path:       "/.snapshots/rwsnap_2026-05-27T16-00-00_42",
+			menuFormat: "2006-01-02T15:04:05Z",
+			want:       "2026-05-27T16-00-00",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			snap := &btrfs.Snapshot{
+				Subvolume:    &btrfs.Subvolume{ID: 42, Path: tt.path},
+				SnapshotTime: ts,
+			}
+			got := snapshotDisplayName(snap, tt.menuFormat, tt.useLocalTime)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

@@ -36,6 +36,7 @@ func init() {
 	rootCmd.AddCommand(generateCmd)
 	generateCmd.Flags().Bool("dry-run", false, "Show what would be written without making changes")
 	generateCmd.Flags().BoolP("yes", "y", false, "Automatically approve all changes without prompting")
+	generateCmd.Flags().Bool("force", false, "Force generation even if booted from a snapshot")
 }
 
 func loadConfig(cmd *cobra.Command) (*config.Config, error) {
@@ -71,6 +72,12 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	rootFS, err := btrfsMgr.GetRootFilesystem()
 	if err != nil {
 		return fmt.Errorf("locate root btrfs filesystem: %w", err)
+	}
+
+	force, _ := cmd.Flags().GetBool("force")
+	if !force && cfg.Behavior.ExitOnSnapshotBoot.IsTrue() && btrfsMgr.IsSnapshotBootFromRootFS(rootFS) {
+		log.Warn().Str("subvolume", rootFS.Subvolume.Path).Msg("Currently booted from a snapshot. Use --force to override or set behavior.exit_on_snapshot_boot=false in config.")
+		return fmt.Errorf("refusing to generate BLS entries while booted from snapshot")
 	}
 
 	snapshots, err := collectSnapshots(btrfsMgr, cfg.Snapshot.SelectionCount)
