@@ -17,6 +17,7 @@ import (
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/fstab"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/kernel"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/runner"
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/snapshotfs"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )
@@ -116,6 +117,9 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	}
 
 	patch := diff.NewPatchDiff()
+	for _, u := range snapshotfs.UpdateFstabs(snapshots, rootFS, fstab.NewManager()) {
+		patch.AddFile(u.Diff)
+	}
 	for _, d := range out.Diffs {
 		patch.AddFile(d)
 	}
