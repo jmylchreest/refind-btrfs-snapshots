@@ -77,7 +77,10 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	if len(allImages) > 0 {
 		kernelScanner.InspectAll(allImages)
 		bootSets = kernelScanner.BuildBootSets(allImages)
-		log.Info().Int("boot_sets", len(bootSets)).Msg("Detected boot configurations on ESP")
+		log.Info().
+			Int("boot_sets", len(bootSets)).
+			Strs("layouts", bootSetLayoutLabels(bootSets)).
+			Msg("Detected boot configurations on ESP")
 	} else {
 		log.Debug().Msg("No boot images found on ESP, staleness checking will be unavailable")
 	}
@@ -130,6 +133,16 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		log.Info().Msg("Successfully generated rEFInd snapshot configurations")
 	}
 	return nil
+}
+
+// bootSetLayoutLabels returns "<kernel-name>:<layout>" labels for each boot set,
+// for inclusion in summary log lines.
+func bootSetLayoutLabels(bootSets []*kernel.BootSet) []string {
+	labels := make([]string, 0, len(bootSets))
+	for _, bs := range bootSets {
+		labels = append(labels, fmt.Sprintf("%s:%s", bs.KernelName, bs.Layout))
+	}
+	return labels
 }
 
 // checkRootPrivileges checks if the current user has root privileges

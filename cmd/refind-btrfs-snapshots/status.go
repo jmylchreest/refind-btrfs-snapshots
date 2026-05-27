@@ -159,6 +159,7 @@ type compatibilityJSON struct {
 
 type compatEntryJSON struct {
 	KernelName string `json:"kernel_name"`
+	Layout     string `json:"layout"`
 	Status     string `json:"status"`
 	Method     string `json:"method,omitempty"`
 	Reason     string `json:"reason,omitempty"`
@@ -186,6 +187,7 @@ func outputStatusJSON(bootSets []*kernel.BootSet, matrix []snapshotCompatibility
 			if row.BootMode == kernel.BootModeBtrfs {
 				cj.BootSets = append(cj.BootSets, compatEntryJSON{
 					KernelName: bootSets[i].KernelName,
+					Layout:     string(bootSets[i].Layout),
 					Status:     "n/a",
 					Method:     "in_snapshot",
 				})
@@ -193,6 +195,7 @@ func outputStatusJSON(bootSets []*kernel.BootSet, matrix []snapshotCompatibility
 			}
 			entry := compatEntryJSON{
 				KernelName: bootSets[i].KernelName,
+				Layout:     string(bootSets[i].Layout),
 				Status:     result.StatusString(),
 				Method:     string(result.Method),
 				Reason:     string(result.Reason),
@@ -224,8 +227,9 @@ func outputStatusTable(bootSets []*kernel.BootSet, matrix []snapshotCompatibilit
 	headers := []string{"SNAPSHOT TIME", "SNAPSHOT PATH", "BOOT"}
 	separators := []string{"─────────────", "─────────────", "────"}
 	for _, bs := range bootSets {
-		headers = append(headers, strings.ToUpper(bs.KernelName))
-		separators = append(separators, strings.Repeat("─", max(len(bs.KernelName), 7)))
+		header := fmt.Sprintf("%s (%s)", strings.ToUpper(bs.KernelName), strings.ToUpper(string(bs.Layout)))
+		headers = append(headers, header)
+		separators = append(separators, strings.Repeat("─", max(len(header), 7)))
 	}
 	headers = append(headers, "MODULES")
 	separators = append(separators, "───────")

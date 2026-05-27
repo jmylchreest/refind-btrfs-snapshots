@@ -51,10 +51,12 @@ func init() {
 // bootSetJSON is the JSON-serializable representation of a boot set.
 type bootSetJSON struct {
 	KernelName    string          `json:"kernel_name"`
+	Layout        string          `json:"layout"`
 	KernelVersion string          `json:"kernel_version,omitempty"`
 	Kernel        *bootImageJSON  `json:"kernel,omitempty"`
 	Initramfs     *bootImageJSON  `json:"initramfs,omitempty"`
 	Fallback      *bootImageJSON  `json:"fallback,omitempty"`
+	UKI           *bootImageJSON  `json:"uki,omitempty"`
 	Microcode     []bootImageJSON `json:"microcode,omitempty"`
 }
 
@@ -140,10 +142,12 @@ func outputBootsetsJSON(bootSets []*kernel.BootSet, allImages []*kernel.BootImag
 	for _, bs := range bootSets {
 		bsj := bootSetJSON{
 			KernelName:    bs.KernelName,
+			Layout:        string(bs.Layout),
 			KernelVersion: bs.KernelVersion(),
 			Kernel:        toBootImageJSON(bs.Kernel),
 			Initramfs:     toBootImageJSON(bs.Initramfs),
 			Fallback:      toBootImageJSON(bs.Fallback),
+			UKI:           toBootImageJSON(bs.UKI),
 		}
 		for _, mc := range bs.Microcode {
 			if j := toBootImageJSON(mc); j != nil {
@@ -206,30 +210,39 @@ func outputBootsetsTable(bootSets []*kernel.BootSet, allImages []*kernel.BootIma
 
 		fmt.Printf("  %s\n", bs.DisplayName())
 		fmt.Printf("    Kernel name:    %s\n", bs.KernelName)
+		fmt.Printf("    Layout:         %s\n", bs.Layout)
 		fmt.Printf("    Kernel version: %s\n", version)
 
-		if bs.Kernel != nil {
-			fmt.Printf("    Kernel:         %s\n", bs.Kernel.Path)
-		} else {
-			fmt.Printf("    Kernel:         (not found)\n")
-		}
-
-		if bs.Initramfs != nil {
-			info := bs.Initramfs.Path
-			if bs.Initramfs.Inspected != nil && bs.Initramfs.Inspected.CompressFormat != "" {
-				info += fmt.Sprintf(" [%s]", bs.Initramfs.Inspected.CompressFormat)
+		if bs.Layout == kernel.LayoutUKI {
+			if bs.UKI != nil {
+				fmt.Printf("    UKI:            %s\n", bs.UKI.Path)
+			} else {
+				fmt.Printf("    UKI:            (not found)\n")
 			}
-			fmt.Printf("    Initramfs:      %s\n", info)
 		} else {
-			fmt.Printf("    Initramfs:      (not found)\n")
-		}
-
-		if bs.Fallback != nil {
-			info := bs.Fallback.Path
-			if bs.Fallback.Inspected != nil && bs.Fallback.Inspected.CompressFormat != "" {
-				info += fmt.Sprintf(" [%s]", bs.Fallback.Inspected.CompressFormat)
+			if bs.Kernel != nil {
+				fmt.Printf("    Kernel:         %s\n", bs.Kernel.Path)
+			} else {
+				fmt.Printf("    Kernel:         (not found)\n")
 			}
-			fmt.Printf("    Fallback:       %s\n", info)
+
+			if bs.Initramfs != nil {
+				info := bs.Initramfs.Path
+				if bs.Initramfs.Inspected != nil && bs.Initramfs.Inspected.CompressFormat != "" {
+					info += fmt.Sprintf(" [%s]", bs.Initramfs.Inspected.CompressFormat)
+				}
+				fmt.Printf("    Initramfs:      %s\n", info)
+			} else {
+				fmt.Printf("    Initramfs:      (not found)\n")
+			}
+
+			if bs.Fallback != nil {
+				info := bs.Fallback.Path
+				if bs.Fallback.Inspected != nil && bs.Fallback.Inspected.CompressFormat != "" {
+					info += fmt.Sprintf(" [%s]", bs.Fallback.Inspected.CompressFormat)
+				}
+				fmt.Printf("    Fallback:       %s\n", info)
+			}
 		}
 
 		if len(bs.Microcode) > 0 {
