@@ -46,9 +46,7 @@ func (g *generator) Generate(input bootloader.Input) (*bootloader.Output, error)
 	for _, d := range expected {
 		out.Diffs = append(out.Diffs, d)
 	}
-	for _, d := range orphans {
-		out.Diffs = append(out.Diffs, d)
-	}
+	out.Diffs = append(out.Diffs, orphans...)
 
 	if len(out.Diffs) > 0 {
 		out.UpdatedConfigs = append(out.UpdatedConfigs, cfg.EntriesDir)
