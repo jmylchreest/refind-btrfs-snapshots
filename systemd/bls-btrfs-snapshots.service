@@ -1,0 +1,19 @@
+[Unit]
+Description=Generate BLS Type #1 boot entries for btrfs snapshots
+Documentation=https://github.com/jmylchreest/refind-btrfs-snapshots
+After=local-fs.target
+Before=snapper-boot.service
+ConditionPathExists=/usr/bin/bls-btrfs-snapshots
+ConditionPathExists=/etc/bls-btrfs-snapshots.yaml
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bls-btrfs-snapshots --config /etc/bls-btrfs-snapshots.yaml generate -y
+User=root
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=300
+SyslogIdentifier=bls-btrfs-snapshots
+
+[Install]
+WantedBy=multi-user.target
