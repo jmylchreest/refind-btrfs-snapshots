@@ -5,16 +5,17 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/bls"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/bootloader"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/cliconfig"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/config"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/diff"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/discovery"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/fstab"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/kernel"
-	"github.com/jmylchreest/refind-btrfs-snapshots/internal/refind"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/runner"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -26,52 +27,19 @@ var generateCmd = &cobra.Command{
 	RunE:  runGenerate,
 }
 
+var blsFlagToKey = map[string]string{
+	"dry-run": "dry_run",
+	"yes":     "yes",
+}
+
 func init() {
 	rootCmd.AddCommand(generateCmd)
 	generateCmd.Flags().Bool("dry-run", false, "Show what would be written without making changes")
 	generateCmd.Flags().BoolP("yes", "y", false, "Automatically approve all changes without prompting")
 }
 
-// configCandidates resolves the config path: --config flag wins, otherwise
-// prefer the binary-specific file and fall back to refind-btrfs-snapshots.yaml.
-func configCandidates(flagPath string) []string {
-	if flagPath != "" {
-		return []string{flagPath}
-	}
-	return []string{
-		"/etc/bls-btrfs-snapshots.yaml",
-		"/etc/refind-btrfs-snapshots.yaml",
-	}
-}
-
 func loadConfig(cmd *cobra.Command) (*config.Config, error) {
-	flagPath, _ := cmd.Flags().GetString("config")
-	for _, p := range configCandidates(flagPath) {
-		if _, err := os.Stat(p); err == nil {
-			cfg, err := config.Load(p, nil)
-			if err != nil {
-				return nil, err
-			}
-			log.Debug().Str("config_file", p).Msg("Loaded config")
-			applyFlagOverrides(cfg, cmd)
-			return cfg, nil
-		}
-	}
-	cfg, err := config.Load("", nil)
-	if err != nil {
-		return nil, err
-	}
-	applyFlagOverrides(cfg, cmd)
-	return cfg, nil
-}
-
-func applyFlagOverrides(cfg *config.Config, cmd *cobra.Command) {
-	if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
-		cfg.DryRun = config.Truthy(true)
-	}
-	if yes, _ := cmd.Flags().GetBool("yes"); yes {
-		cfg.AutoApprove = config.Truthy(true)
-	}
+	return cliconfig.Load(cmd, "/etc/bls-btrfs-snapshots.yaml", blsFlagToKey)
 }
 
 func runGenerate(cmd *cobra.Command, args []string) error {
@@ -81,7 +49,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	}
 
 	if !cfg.BLS.WriteEntries.IsTrue() {
-		log.Warn().Msg("bls.write_entries is false in config — nothing to do. Enable it in /etc/bls-btrfs-snapshots.yaml (or /etc/refind-btrfs-snapshots.yaml).")
+		log.Warn().Msg("bls.write_entries is false in config — nothing to do. Enable it in /etc/bls-btrfs-snapshots.yaml.")
 		return nil
 	}
 
@@ -120,12 +88,10 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	planner := kernel.NewPlanner(fstab.NewManager(), checker, bootSets, rootFS, ukiStrategy)
 	plans := planner.Plan(snapshots)
 
-	sourceEntries, err := extractSourceEntries(espPath, cfg.Refind.ConfigPath, rootFS)
-	if err != nil {
-		log.Warn().Err(err).Msg("Could not parse rEFInd source entries — BLS output may be empty")
-	}
+	entriesDir := filepath.Join(espPath, strings.TrimPrefix(cfg.BLS.EntriesDir, "/"))
+	sourceEntries := extractSourceEntries(entriesDir, cfg.BLS.EntryPrefix, bootSets)
 	if len(sourceEntries) == 0 {
-		log.Warn().Msg("No source boot entries found. The bls binary derives cmdlines from the system's primary bootloader config (currently expected: refind.conf).")
+		log.Warn().Msg("No source boot entries available. The bls binary derives cmdlines from existing BLS entries on the ESP, then /etc/kernel/cmdline, then /proc/cmdline. None produced usable templates.")
 	}
 
 	r := runner.New(cfg.DryRun.IsTrue())
@@ -224,38 +190,82 @@ func collectSnapshots(mgr *btrfs.Manager, selectionCount int) ([]*btrfs.Snapshot
 	return all, nil
 }
 
-// extractSourceEntries reads the system's rEFInd configuration to get the
-// canonical kernel + cmdline pairs. This is a v1 simplification — when
-// discovery is upgraded to populate BootSet.Cmdline directly, this lookup
-// will move into the discovery layer.
-func extractSourceEntries(espPath, configPath string, rootFS *btrfs.Filesystem) ([]bootloader.SourceEntry, error) {
-	parser := refind.NewParser(espPath)
-
-	if configPath == "" || configPath == "/EFI/refind/refind.conf" {
-		if found, err := parser.FindRefindConfigPath(); err == nil {
-			configPath = found
-		}
-	}
-	if !filepath.IsAbs(configPath) {
-		configPath = filepath.Join(espPath, configPath)
-	}
-
-	cfg, err := parser.ParseConfig(configPath)
-	if err != nil {
-		return nil, err
-	}
-
+// extractSourceEntries returns the templates the BLS generator clones per
+// snapshot. Primary source is existing non-managed BLS entries on the ESP
+// (what systemd-boot already reads); when that's empty, we synthesise one
+// per non-UKI BootSet using a cmdline read from /etc/kernel/cmdline or
+// /proc/cmdline.
+func extractSourceEntries(entriesDir, managedPrefix string, bootSets []*kernel.BootSet) []bootloader.SourceEntry {
+	scanned := bls.ScanEntriesDir(entriesDir)
 	var sources []bootloader.SourceEntry
-	for _, entry := range cfg.Entries {
-		if !refind.IsBootable(entry, rootFS) {
+	for _, e := range scanned {
+		if managedPrefix != "" && strings.HasPrefix(e.ID, managedPrefix) {
 			continue
 		}
+		if e.Linux == "" {
+			continue // not a Linux boot entry (could be Windows, EFI shell, etc.)
+		}
 		sources = append(sources, bootloader.SourceEntry{
-			Title:   entry.Title,
-			Loader:  entry.Loader,
-			Initrd:  entry.Initrd,
-			Options: entry.Options,
+			Title:   e.Title,
+			Loader:  e.Linux,
+			Initrd:  append([]string(nil), e.Initrd...),
+			Options: e.OptionsString(),
 		})
 	}
-	return sources, nil
+	if len(sources) > 0 {
+		log.Debug().Int("count", len(sources)).Msg("Using existing BLS entries as source templates")
+		return sources
+	}
+
+	cmdline, src, err := readFallbackCmdline()
+	if err != nil {
+		log.Warn().Err(err).Msg("No existing BLS entries and no cmdline fallback available")
+		return nil
+	}
+	log.Info().Str("source", src).Msg("No existing BLS entries on ESP — synthesising sources from BootSets")
+
+	for _, bs := range bootSets {
+		if bs.Layout == kernel.LayoutUKI || bs.Kernel == nil {
+			continue
+		}
+		se := bootloader.SourceEntry{
+			Title:   bs.DisplayName(),
+			Loader:  bs.Kernel.Path,
+			Options: cmdline,
+		}
+		if bs.Initramfs != nil {
+			se.Initrd = append(se.Initrd, bs.Initramfs.Path)
+		}
+		for _, mc := range bs.Microcode {
+			se.Initrd = append(se.Initrd, mc.Path)
+		}
+		sources = append(sources, se)
+	}
+	return sources
+}
+
+// readFallbackCmdline returns the kernel command line from the first
+// readable source. /etc/kernel/cmdline is the kernel-install / mkinitcpio
+// canonical location; /proc/cmdline is the running kernel as a last resort,
+// stripped of bootloader-injected initrd= and BOOT_IMAGE= tokens.
+func readFallbackCmdline() (string, string, error) {
+	if b, err := os.ReadFile("/etc/kernel/cmdline"); err == nil {
+		return strings.TrimSpace(string(b)), "/etc/kernel/cmdline", nil
+	}
+	if b, err := os.ReadFile("/proc/cmdline"); err == nil {
+		return stripProcCmdline(strings.TrimSpace(string(b))), "/proc/cmdline", nil
+	}
+	return "", "", fmt.Errorf("no readable cmdline at /etc/kernel/cmdline or /proc/cmdline")
+}
+
+func stripProcCmdline(s string) string {
+	keep := make([]string, 0, len(strings.Fields(s)))
+	for _, tok := range strings.Fields(s) {
+		lower := strings.ToLower(tok)
+		if strings.HasPrefix(lower, "initrd=") || strings.HasPrefix(lower, "boot_image=") {
+			continue
+		}
+		keep = append(keep, tok)
+	}
+	return strings.Join(keep, " ")
 }

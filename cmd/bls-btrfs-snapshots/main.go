@@ -16,12 +16,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	Version   = "dev"
-	Commit    = "unknown"
-	BuildTime = "unknown"
-)
-
 var rootCmd = &cobra.Command{
 	Use:   "bls-btrfs-snapshots",
 	Short: "Write BLS Type #1 entries for btrfs snapshots",
@@ -35,7 +29,7 @@ for btrfs-mode coverage via rEFInd's btrfs driver.`,
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringP("config", "c", "", "Path to config file (default: /etc/bls-btrfs-snapshots.yaml, falls back to /etc/refind-btrfs-snapshots.yaml)")
+	rootCmd.PersistentFlags().StringP("config", "c", "", "Path to config file (default: /etc/bls-btrfs-snapshots.yaml)")
 	rootCmd.PersistentFlags().String("log-level", "", "Log verbosity: trace, debug, info, warn, error")
 }
 
