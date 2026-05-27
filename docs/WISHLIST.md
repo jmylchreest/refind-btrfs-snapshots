@@ -4,7 +4,7 @@ Planned features and capabilities that aren't built yet. Items here are **not co
 
 ## Table of Contents
 
-- [`uki-btrfs-snapshots` binary (phase 3)](#uki-btrfs-snapshots-binary-phase-3)
+- [`uki-btrfs-snapshots` binary](#uki-btrfs-snapshots-binary)
   - [Intention](#intention)
   - [Outcome](#outcome)
   - [Approach](#approach)
@@ -13,7 +13,7 @@ Planned features and capabilities that aren't built yet. Items here are **not co
 
 ---
 
-## `uki-btrfs-snapshots` binary (phase 3)
+## `uki-btrfs-snapshots` binary
 
 A third sibling to `refind-btrfs-snapshots` and `bls-btrfs-snapshots` that makes btrfs snapshots bootable when the kernel is delivered as a UKI (Unified Kernel Image).
 
@@ -100,11 +100,11 @@ Practical concerns to surface in v1:
 
 So once we plumb config keys for these (`uki.signing.key_path`, `uki.signing.cert_path`, `uki.signing.signtool`, `uki.pcr.key_path`, etc.) and forward them as ukify flags, Secure Boot support is essentially free.
 
-**Phased rollout:**
+**Layered rollout** (do less initially, add more if anyone asks):
 
-- **v1 (initial release):** detect Secure Boot via `/sys/firmware/efi/efivars/SecureBoot-*`; if enabled and signing config is absent, refuse cleanly with a message pointing at the config knobs that will become available in v2. Don't silently ship unsigned UKIs the firmware will reject.
-- **v2:** wire the signing config through. The user provides their existing SB key/cert (the same ones their `kernel-install` setup uses), and the per-snapshot UKIs get signed identically.
-- **v3 (if anyone asks):** PCR signing for measured-boot setups. Note: changing the cmdline changes the PCR measurements, so TPM-sealed disks would fail to unlock for a snapshot-booted system unless the user's PCR policy explicitly enrolls the snapshot UKIs. This is fiddly and probably wants opt-in plus clear docs.
+- **Initial:** detect Secure Boot via `/sys/firmware/efi/efivars/SecureBoot-*`; if enabled and signing config is absent, refuse cleanly with a message pointing at the signing config keys. Don't silently ship unsigned UKIs the firmware will reject.
+- **With signing:** wire the signing config through. The user provides their existing SB key/cert (the same ones their `kernel-install` setup uses), and the per-snapshot UKIs get signed identically.
+- **With PCR:** PCR signing for measured-boot setups. Note: changing the cmdline changes the PCR measurements, so TPM-sealed disks would fail to unlock for a snapshot-booted system unless the user's PCR policy explicitly enrolls the snapshot UKIs. Fiddly; wants opt-in plus clear docs.
 
 ### Open questions
 
