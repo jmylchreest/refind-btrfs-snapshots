@@ -144,10 +144,10 @@ jobs:
           DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
           go build -ldflags "-s -w \
-            -X 'github.com/jmylchreest/refind-btrfs-snapshots/cmd.Version=${VERSION}' \
-            -X 'github.com/jmylchreest/refind-btrfs-snapshots/cmd.Commit=${COMMIT}' \
-            -X 'github.com/jmylchreest/refind-btrfs-snapshots/cmd.BuildTime=${DATE}'" \
-            -o "dist/refind-btrfs-snapshots" .
+            -X 'main.Version=${VERSION}' \
+            -X 'main.Commit=${COMMIT}' \
+            -X 'main.BuildTime=${DATE}'" \
+            -o "dist/refind-btrfs-snapshots" ./cmd/refind-btrfs-snapshots
 
       - name: Prepare distribution
         run: |
@@ -195,7 +195,7 @@ jobs:
           GOOS: linux
           GOARCH: ${{ matrix.goarch }}
         run: |
-          go build -ldflags "-s -w" -o /dev/null .
+          go build -ldflags "-s -w" -o /dev/null ./cmd/refind-btrfs-snapshots
 
   # ─── Stage 4: Create Release ──────────────────────────────────────────
   release:

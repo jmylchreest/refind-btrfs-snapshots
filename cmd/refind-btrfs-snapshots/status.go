@@ -7,7 +7,7 @@
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-package cmd
+package main
 
 import (
 	"encoding/json"
