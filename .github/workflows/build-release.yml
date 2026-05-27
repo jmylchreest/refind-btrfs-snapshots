@@ -126,6 +126,7 @@ jobs:
         binary:
           - { name: refind-btrfs-snapshots, path: ./cmd/refind-btrfs-snapshots, config: configs/refind-btrfs-snapshots.yaml, systemd: true }
           - { name: bls-btrfs-snapshots,    path: ./cmd/bls-btrfs-snapshots,    config: configs/bls-btrfs-snapshots.yaml,    systemd: true }
+          - { name: kernel-spy,             path: ./cmd/kernel-spy,             config: "",                                  systemd: false }
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -167,10 +168,13 @@ jobs:
           # for binaries that ship them. Built via a staging dir so the archive
           # layout is predictable and unrelated configs aren't bundled.
           STAGE="dist/stage-${BIN}-${ARCH}"
-          mkdir -p "$STAGE/configs"
+          mkdir -p "$STAGE"
           cp dist/$BIN "$STAGE/"
-          cp ${{ matrix.binary.config }} "$STAGE/configs/"
           cp LICENSE "$STAGE/"
+          if [[ -n "${{ matrix.binary.config }}" ]]; then
+            mkdir -p "$STAGE/configs"
+            cp ${{ matrix.binary.config }} "$STAGE/configs/"
+          fi
           if [[ "${{ matrix.binary.systemd }}" == "true" ]]; then
             mkdir -p "$STAGE/systemd"
             cp systemd/${BIN}.* "$STAGE/systemd/"
@@ -196,7 +200,7 @@ jobs:
       fail-fast: false
       matrix:
         goarch: [amd64, arm64]
-        binary: [refind-btrfs-snapshots, bls-btrfs-snapshots]
+        binary: [refind-btrfs-snapshots, bls-btrfs-snapshots, kernel-spy]
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -242,7 +246,7 @@ jobs:
           cp systemd/refind-btrfs-snapshots.path release/
 
           # Move all build artifacts to release folder
-          find artifacts -type f \( -name "*.tar.gz" -o -name "*-btrfs-snapshots-linux-*" \) -exec mv {} release/ \;
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*-linux-amd64" -o -name "*-linux-arm64" \) -exec mv {} release/ \;
 
           echo "=== Release assets ==="
           ls -la release/
@@ -428,5 +432,6 @@ jobs:
           name: |
             refind-btrfs-snapshots_linux_*
             bls-btrfs-snapshots_linux_*
+            kernel-spy_linux_*
             checksums
           failOnError: false
