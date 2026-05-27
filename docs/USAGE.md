@@ -10,7 +10,6 @@ Full documentation for `refind-btrfs-snapshots`. For installation and quick star
   - [Split Layout](#split-layout)
   - [BLS Layout](#bls-layout-boot-loader-specification-type-1)
   - [UKI Layout](#uki-layout-unified-kernel-image-bls-type-2)
-  - [UKI Snapshots: ESP-mode Caveat](#uki-snapshots-esp-mode-caveat)
 - [Commands](#commands)
   - [generate](#generate)
   - [list](#list)
@@ -104,27 +103,7 @@ A drop-in `.conf` file under `<esp>/loader/entries/*.conf` describes the entry. 
 
 A single PE/EFI binary at `<esp>/EFI/Linux/<name>.efi` containing the kernel, initramfs, cmdline, and OS-release metadata. The systemd-stub launches the embedded kernel with the embedded cmdline. Spec: <https://uapi-group.org/specifications/specs/boot_loader_specification/#type-2-efi-unified-kernel-images>.
 
-rEFInd treats UKIs as standard EFI loaders — it autodetects them from `<esp>/EFI/Linux/`. Generated UKI menu entries contain only a `loader` line. There is no `initrd` (it is embedded) and **no `options`** (the systemd-stub ignores boot-loader-supplied cmdline by default; passing `options` only takes effect if the UKI was built with cmdline addons).
-
-### UKI Snapshots: ESP-mode Caveat
-
-A UKI's embedded cmdline points at a specific root subvolume — there's no way for the boot loader to override it on a standard UKI. The implications differ depending on where the UKI lives:
-
-**Btrfs mode (UKI inside the snapshot's `/boot/EFI/Linux/`):**
-Each snapshot contains its own UKI with its own embedded cmdline pointing at that snapshot's subvolume. Booting the snapshot's UKI boots the snapshot. Fully supported.
-
-**ESP mode (UKI on the ESP, `<esp>/EFI/Linux/`):**
-The UKI's embedded cmdline points at the **live** root, not any snapshot. We cannot write a snapshot boot entry that actually enters the snapshot — the UKI will always boot live root regardless of what we put in `options`.
-
-Configure the response via `uki.snapshot_strategy`:
-
-| Strategy  | Behaviour                                                                                                                 |
-|-----------|---------------------------------------------------------------------------------------------------------------------------|
-| `skip` (default) | Do not generate snapshot entries for ESP-mode UKI sets. Safest — no misleading entries appear in the menu.          |
-| `warn`    | Generate the entry but log a clear warning that it will boot live root, not the snapshot.                                 |
-| `disable` | Generate the entry with rEFInd's `disabled` directive — visible in the menu but unbootable, signalling the limitation.    |
-
-Btrfs-mode UKI snapshots are unaffected by this setting and are always generated.
+**Discovery only — not snapshot-bootable.** We detect and inspect UKIs (they show up in `list bootsets`, `status`, and `kernel-spy`, and their embedded kernel version participates in staleness detection), but we do not produce snapshot boot entries for UKI boot sets. A snapshot-bootable cmdline is `rootflags=subvol=<snap>,subvolid=<id>`, and on a UKI that lives inside the signed `.cmdline` PE section — there's no generally-reliable boot-loader-side override, so making a snapshot bootable would require rewriting (and, under Secure Boot, re-signing) the UKI per snapshot. That's tracked as a planned standalone `uki-btrfs-snapshots` binary — see [`WISHLIST.md`](WISHLIST.md).
 
 ## Commands
 
@@ -328,7 +307,7 @@ esp:
 | **Logging** | `log_level` | `"info"` | Log verbosity: `trace`, `debug`, `info`, `warn`, `error` |
 | **Kernel** | `kernel.stale_snapshot_action` | `"delete"` | Action for stale snapshots: `delete`, `warn`, `disable`, `fallback` |
 | | `kernel.boot_image_patterns` | *(built-in)* | Custom boot image patterns (see config file) |
-| **UKI** | `uki.snapshot_strategy` | `"skip"` | Behaviour for ESP-mode UKI snapshots: `skip`, `warn`, `disable`. See [UKI Snapshots: ESP-mode Caveat](#uki-snapshots-esp-mode-caveat) |
+| **UKI** | `uki.snapshot_strategy` | `"skip"` | Whether refind menu entries are generated for ESP-mode UKI sets. `skip` (default) hides them, `warn`/`disable` emit entries that would boot the live root (not the snapshot) — see [UKI Layout](#uki-layout-unified-kernel-image-bls-type-2). |
 | **Advanced** | `advanced.naming.rwsnap_format` | `"2006-01-02_15-04-05"` | Timestamp format for writable snapshot filenames |
 | | `advanced.naming.menu_format` | `"2006-01-02T15:04:05Z"` | Timestamp format for menu entry titles |
 

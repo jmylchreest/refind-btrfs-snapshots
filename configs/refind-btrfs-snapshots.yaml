@@ -98,19 +98,17 @@ kernel:
 
 # Unified Kernel Image (UKI) handling
 #
-# A UKI (BLS Type #2) is a single PE/EFI binary containing kernel + initramfs +
-# cmdline. The systemd-stub ignores boot-loader-supplied cmdline on standard
-# UKIs, so for ESP-mode UKIs we cannot write a snapshot entry that actually
-# boots into the snapshot — it would always boot the live root.
-#
-# Btrfs-mode UKI snapshots (UKI inside the snapshot's /boot/EFI/Linux/) are
-# always generated and unaffected by this setting.
+# UKIs are discovered and inspected but are not made snapshot-bootable by this
+# tool: the cmdline lives inside the signed .cmdline PE section and there is no
+# generally-reliable boot-loader-side override. Making snapshots bootable for
+# UKI hosts requires rewriting (and re-signing) the UKI per snapshot — tracked
+# as a planned standalone uki-btrfs-snapshots binary (see docs/WISHLIST.md).
 #
 # Spec: https://uapi-group.org/specifications/specs/boot_loader_specification/
 uki:
-  # ESP-mode UKI snapshot strategy:
-  #   "skip"    - Don't generate snapshot entries for ESP-mode UKIs (default — safest)
-  #   "warn"    - Generate the entry but log a clear warning that it boots live root
+  # Whether refind menu entries are generated for ESP-mode UKI sets:
+  #   "skip"    - Don't generate menu entries (default, recommended)
+  #   "warn"    - Generate the entry but log that it would boot live root, not the snapshot
   #   "disable" - Generate the entry with rEFInd's 'disabled' directive (visible but not bootable)
   snapshot_strategy: "skip"
 
