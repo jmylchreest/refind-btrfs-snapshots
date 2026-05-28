@@ -46,20 +46,28 @@ The two are not mutually exclusive. Plausible combinations:
 
 ```yaml
 uki:
-  # Which mode(s) to apply. Both are independent; you can enable either or both.
-  modes: [clone]                      # default; alternatives: [multi-profile], [clone, multi-profile]
+  # Which mode(s) to apply. Both are independent; both are enabled by default
+  # so installing the binary gives you the full coverage matrix: multi-profile
+  # for systemd-boot menu integration with sd-stub, plus 10 universal-fallback
+  # clones for direct-firmware boot or systemd-boot menu recovery.
+  modes: [clone, multi-profile]
 
   clone:
-    # Cap on how many snapshots get cloned. Cloning is expensive (~70 MB each)
-    # so this defaults conservatively; ESPs are typically 512 MB - 1 GB. The
-    # binary refuses to apply if the resulting set wouldn't fit alongside what's
-    # already on the ESP.
-    # 0 = inherit snapshot.selection_count (caller beware).
+    # Cap on how many snapshots get cloned. Cloning is expensive (~70 MB each
+    # before compression) so this defaults conservatively; ESPs are typically
+    # 512 MB - 1 GB. The binary runs a mandatory pre-flight ESP free-space
+    # check and refuses to apply if the projected set wouldn't fit alongside
+    # what's already on the ESP. Pick whichever boot-set's kernel each cloned
+    # snapshot was taken under; cloning is per (snapshot × associated kernel),
+    # not per snapshot × every kernel.
+    # 0 = unlimited (inherits snapshot.selection_count — caller beware).
     recent: 10
 
   multi_profile:
-    # Cap on how many profiles join the base UKI. Profiles cost a few KB each
-    # so this can run unlimited safely in normal cases.
+    # Cap on profiles joined to the base UKI. One base UKI per kernel; each
+    # carries one .profile section per eligible snapshot. Profiles are cheap
+    # (~few KB each) so this defaults unlimited — the practical cap is
+    # snapshot.selection_count.
     # 0 = inherit snapshot.selection_count.
     recent: 0
 
@@ -68,6 +76,17 @@ uki:
     key_path: ""
     cert_path: ""
 ```
+
+**Default footprint** for a single-kernel system with 25 selected snapshots:
+- 1 multi-profile UKI ≈ 70 MB (kernel + initrd shared; 25 profiles add ~50 KB total)
+- 10 clones × ~70 MB ≈ 700 MB
+- **Total ≈ 770 MB on the ESP.**
+
+For two-kernel systems: 2 multi-profile UKIs (one per kernel) + 10 clones associated with whichever kernel each clone's snapshot was taken under (clones aren't multiplied per kernel) ≈ 840 MB.
+
+The pre-flight check makes "doesn't fit" a hard, actionable error rather than a silent overflow — the binary refuses to apply with `ESP has X MB free, need Y MB. Reduce uki.clone.recent or free space.`
+
+If the default footprint is too aggressive: setting `modes: [clone]` alone drops the multi-profile UKI overhead (~70 MB per kernel); setting `modes: [multi-profile]` alone reduces the total to a single multi-profile UKI per kernel (~70 MB regardless of snapshot count); setting `modes: []` opts out entirely.
 
 #### Profile display names
 
@@ -209,6 +228,7 @@ ukify natively handles SB signing for **both** modes. We just plumb config keys 
 
 ### Open questions
 
+- **Both modes enabled by default**, gated only by package install (≈770 MB ESP footprint for the default single-kernel + 25-snapshot setup). Reasoning: this is the binary's *whole job*, and the user opted in by installing it; the bls binary's `write_entries: false` precedent isn't a fit here because the disk cost is large enough that silent overflow would be worse than an explicit pre-flight refusal. The pre-flight ESP free-space check is **mandatory**, not advisory — refuse to apply if projected size doesn't fit, with the exact numbers in the error message. Users wanting to tune down: set `modes: [clone]` or `modes: [multi-profile]` or `modes: []`.
 - **Mode selection:** explicit list config (`uki.modes: [clone, multi-profile]`) rather than auto-detect. Auto-detecting "your boot path uses direct firmware boot" is fragile (would need to walk EFI `BootXXXX`/`BootOrder` vars). Static config is simpler and lets users layer the two modes for belt-and-braces setups.
 - **`uki.clone.recent` default of 10:** chosen for ~700 MB headroom on a typical 1 GB ESP. Worth surfacing actual snapshot+UKI sizes during dry-run so users see what they'd be committing to.
 - **Cleanup model:** mode 1 cleans by prefix-match (same as bls binary). Mode 2 has one UKI to rewrite; cleanup means stripping removed profiles — `ukify build` rebuild from scratch is simpler than surgical removal.
