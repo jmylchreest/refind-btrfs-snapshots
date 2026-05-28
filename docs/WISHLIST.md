@@ -53,15 +53,15 @@ uki:
   modes: [clone, multi-profile]
 
   clone:
-    # Cap on how many snapshots get cloned. Cloning is expensive (~70 MB each
-    # before compression) so this defaults conservatively; ESPs are typically
-    # 512 MB - 1 GB. The binary runs a mandatory pre-flight ESP free-space
+    # Cap on how many snapshots get cloned. Each clone is a full ~70 MB .efi
+    # file (kernel + initrd duplicated; only .cmdline differs from the source
+    # UKI). Pick whichever boot-set's kernel each cloned snapshot was taken
+    # under — cloning is per (snapshot × associated kernel), NOT per snapshot
+    # × every kernel. The binary runs a mandatory pre-flight ESP free-space
     # check and refuses to apply if the projected set wouldn't fit alongside
-    # what's already on the ESP. Pick whichever boot-set's kernel each cloned
-    # snapshot was taken under; cloning is per (snapshot × associated kernel),
-    # not per snapshot × every kernel.
+    # what's already on the ESP.
     # 0 = unlimited (inherits snapshot.selection_count — caller beware).
-    recent: 10
+    recent: 4
 
   multi_profile:
     # Cap on profiles joined to the base UKI. One base UKI per kernel; each
@@ -78,15 +78,17 @@ uki:
 ```
 
 **Default footprint** for a single-kernel system with 25 selected snapshots:
-- 1 multi-profile UKI ≈ 70 MB (kernel + initrd shared; 25 profiles add ~50 KB total)
-- 10 clones × ~70 MB ≈ 700 MB
-- **Total ≈ 770 MB on the ESP.**
+- Multi-profile: **0 MB additional** — operates in-place on the live UKI, only adds ~50 KB of `.profile` sections (kernel + initrd remain a single shared copy)
+- Clones: **4 × ~70 MB ≈ 280 MB** new files
+- **Total ≈ 280 MB additional disk, 5 `.efi` files on the ESP** (1 live multi-profile UKI + 4 cloned UKIs).
 
-For two-kernel systems: 2 multi-profile UKIs (one per kernel) + 10 clones associated with whichever kernel each clone's snapshot was taken under (clones aren't multiplied per kernel) ≈ 840 MB.
+For two-kernel systems: still ~280 MB (multi-profile is in-place on both live UKIs; 4 clones map to whichever kernel each clone's snapshot was taken under — typically the current kernel for recent snapshots). 6 `.efi` files total.
 
-The pre-flight check makes "doesn't fit" a hard, actionable error rather than a silent overflow — the binary refuses to apply with `ESP has X MB free, need Y MB. Reduce uki.clone.recent or free space.`
+This comfortably fits a 512 MB ESP with room for other content. The pre-flight check makes "doesn't fit" a hard, actionable error rather than a silent overflow — the binary refuses to apply with `ESP has X MB free, need Y MB. Reduce uki.clone.recent or free space.`
 
-If the default footprint is too aggressive: setting `modes: [clone]` alone drops the multi-profile UKI overhead (~70 MB per kernel); setting `modes: [multi-profile]` alone reduces the total to a single multi-profile UKI per kernel (~70 MB regardless of snapshot count); setting `modes: []` opts out entirely.
+If the default is still too aggressive: setting `modes: [multi-profile]` alone drops to ~0 MB additional (in-place only); setting `clone.recent: 2` halves the clone cost; setting `modes: []` opts out entirely.
+
+The implementation note that makes mode 2 free: ukify's `--join-profile` lets us inject profile sections into the **existing** live UKI rather than write a parallel file. kernel-install will clobber those profile sections on every kernel upgrade, so the package ships a `90-uki-btrfs-snapshots.install` kernel-install hook that re-runs the join after each kernel update.
 
 #### Profile display names
 
@@ -158,7 +160,7 @@ ukify build \
 
 | Concern | Mitigation |
 |---|---|
-| Each clone is ~70 MB. 25 snapshots × ~70 MB ≈ 1.75 GB on the ESP. | `uki.clone.recent` caps the count separately from `snapshot.selection_count`; default is 10 (≈700 MB). Pre-flight check: compute the required size and refuse if the ESP doesn't have headroom. |
+| Each clone is ~70 MB. 25 snapshots × ~70 MB ≈ 1.75 GB on the ESP. | `uki.clone.recent` caps the count separately from `snapshot.selection_count`; default is 4 (≈280 MB) — fits a 512 MB ESP with headroom. Pre-flight check: compute the required size and refuse if the ESP doesn't have headroom. |
 | Runtime dep on `ukify` (systemd ≥ v253) | Detect at startup; error early with package hint. |
 | Build cost ~2-3 s per UKI | Show per-snapshot progress logs. |
 | Choosing which N to clone when `recent` < total snapshots | Newest-first by `SnapshotTime`. Same ordering the bls binary uses. |
@@ -230,7 +232,7 @@ ukify natively handles SB signing for **both** modes. We just plumb config keys 
 
 - **Both modes enabled by default**, gated only by package install (≈770 MB ESP footprint for the default single-kernel + 25-snapshot setup). Reasoning: this is the binary's *whole job*, and the user opted in by installing it; the bls binary's `write_entries: false` precedent isn't a fit here because the disk cost is large enough that silent overflow would be worse than an explicit pre-flight refusal. The pre-flight ESP free-space check is **mandatory**, not advisory — refuse to apply if projected size doesn't fit, with the exact numbers in the error message. Users wanting to tune down: set `modes: [clone]` or `modes: [multi-profile]` or `modes: []`.
 - **Mode selection:** explicit list config (`uki.modes: [clone, multi-profile]`) rather than auto-detect. Auto-detecting "your boot path uses direct firmware boot" is fragile (would need to walk EFI `BootXXXX`/`BootOrder` vars). Static config is simpler and lets users layer the two modes for belt-and-braces setups.
-- **`uki.clone.recent` default of 10:** chosen for ~700 MB headroom on a typical 1 GB ESP. Worth surfacing actual snapshot+UKI sizes during dry-run so users see what they'd be committing to.
+- **`uki.clone.recent` default of 4:** chosen for ~280 MB headroom on a 512 MB ESP (the smaller-end size that still occurs in the wild). Yields 5 `.efi` files total on a single-kernel system (1 live multi-profile UKI + 4 clones). Worth surfacing actual snapshot+UKI sizes during dry-run so users see what they'd be committing to before raising the cap.
 - **Cleanup model:** mode 1 cleans by prefix-match (same as bls binary). Mode 2 has one UKI to rewrite; cleanup means stripping removed profiles — `ukify build` rebuild from scratch is simpler than surgical removal.
 - **kernel-install coexistence:** distro `kernel-install` plugins regenerate the primary UKI on kernel upgrades, which clobbers any joined profiles. We need a kernel-install hook in mode 2 (and to detect+re-emit clones in mode 1). The systemd `.path` unit watching `/.snapshots/` doesn't fire on kernel rebuilds; need a second trigger watching `/boot/EFI/Linux/`.
 - **Stub override:** ukify defaults to `/usr/lib/systemd/boot/efi/linuxx64.efi.stub`. Some users build UKIs with a custom stub (shim-aware variants). Detect the source UKI's stub and reuse it.
