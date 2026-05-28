@@ -129,7 +129,7 @@ This repository ships three binaries built from a shared core (snapshot discover
 |---|---|---|
 | `refind-btrfs-snapshots` | Generate rEFInd `submenuentry` blocks for each snapshot. Supports both ESP-mode and btrfs-mode snapshots via rEFInd's btrfs driver. | AUR + GitHub Releases |
 | `bls-btrfs-snapshots` | Generate Boot Loader Specification Type #1 `.conf` entries under `<esp>/loader/entries/` for systemd-boot and BLS-aware GRUB. ESP-mode snapshots only. | GitHub Releases |
-| `kernel-spy` | Read-only diagnostic — dumps every kernel image, initramfs, microcode, BLS entry, and UKI the discovery layer can see on a host. Useful for debugging snapshot-bootability questions. | GitHub Releases (no AUR; helper utility) |
+| `kernel-spy` | Read-only diagnostic — dumps every kernel image, initramfs, microcode, BLS entry, and UKI the discovery layer can see on a host. Useful for debugging snapshot-bootability questions. | GitHub Releases |
 
 A planned `uki-btrfs-snapshots` binary that would make UKI hosts snapshot-bootable by cloning UKIs per snapshot is tracked in [`docs/WISHLIST.md`](docs/WISHLIST.md).
 
@@ -140,4 +140,4 @@ A planned `uki-btrfs-snapshots` binary that would make UKI hosts snapshot-bootab
 - [Wishlist](docs/WISHLIST.md) — planned features
 - [Issue Tracker](https://github.com/jmylchreest/refind-btrfs-snapshots/issues)
 - [Releases](https://github.com/jmylchreest/refind-btrfs-snapshots/releases)
-- [AUR Package](https://aur.archlinux.org/packages/refind-btrfs-snapshots-bin) (refind binary only)
+- [AUR Package](https://aur.archlinux.org/packages/refind-btrfs-snapshots-bin)

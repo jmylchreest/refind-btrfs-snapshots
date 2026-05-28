@@ -645,7 +645,7 @@ Shows: ESP detection, snapshot discovery, boot image scanning, kernel version in
 | limine          | (none yet)                       | —                    | Not currently planned.                                                                                           |
 | UKI host        | (planned)                        | —                    | A `uki-btrfs-snapshots` binary that clones UKIs per snapshot is on the wishlist; see [WISHLIST.md](WISHLIST.md). |
 
-For inspecting what the discovery layer sees on a given host — useful regardless of which generator binary you use — the `kernel-spy` helper utility is released on GitHub alongside the others. It dumps every detected kernel image, initramfs, microcode blob, BLS entry, and UKI without modifying anything.
+For inspecting what the discovery layer sees on a given host — useful regardless of which generator binary you use — the `kernel-spy` binary dumps every detected kernel image, initramfs, microcode blob, BLS entry, and UKI without modifying anything.
 
 ## Development
 
