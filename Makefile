@@ -21,7 +21,7 @@ LDFLAGS   := -s -w \
 
 MAN_DIR   := docs/man
 
-.PHONY: build test vet lint check coverage docs docs-clean clean release tag help
+.PHONY: build test vet lint check coverage docs docs-clean uki-fixtures clean release tag help
 
 ## build: Build all binaries for the current platform into dist/
 build:
@@ -71,6 +71,15 @@ docs: docs-clean
 
 docs-clean:
 	@rm -f $(MAN_DIR)/*.1
+
+## uki-fixtures: Regenerate committed UKI test fixtures under internal/kernel/testdata/
+##
+## Requires systemd-ukify locally. The underlying script skips with a clear
+## message and exits 0 if ukify isn't on PATH, so this target is safe to
+## invoke from environments without it — CI doesn't regenerate, it runs
+## tests against the committed binaries.
+uki-fixtures:
+	@./contrib/regen-uki-test-fixtures.sh
 
 ## clean: Remove build artifacts
 clean:

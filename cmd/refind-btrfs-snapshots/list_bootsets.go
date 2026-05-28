@@ -256,3 +256,4 @@ func outputBootsetsTable(bootSets []*kernel.BootSet, allImages []*kernel.BootIma
 
 	return nil
 }
+

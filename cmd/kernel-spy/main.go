@@ -239,6 +239,22 @@ func printImage(img *kernel.BootImage, indent string) {
 		if m.OSReleasePrettyName != "" {
 			fmt.Printf("%s  os-release:  %s\n", indent, m.OSReleasePrettyName)
 		}
+		if m.IsMultiProfile {
+			fmt.Printf("%s  profiles:    %d\n", indent, len(m.Profiles))
+			for _, p := range m.Profiles {
+				id := p.ID
+				if id == "" {
+					id = "(no id)"
+				}
+				fmt.Printf("%s    @%d  %s\n", indent, p.Index, id)
+				if p.Title != "" {
+					fmt.Printf("%s       title:   %s\n", indent, p.Title)
+				}
+				if p.Cmdline != "" {
+					fmt.Printf("%s       cmdline: %s\n", indent, p.Cmdline)
+				}
+			}
+		}
 		if m.MicrocodeVendor != "" {
 			fmt.Printf("%s  vendor:      %s\n", indent, m.MicrocodeVendor)
 			fmt.Printf("%s  blocks:      %d\n", indent, m.MicrocodeBlockCount)

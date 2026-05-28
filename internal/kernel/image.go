@@ -136,9 +136,16 @@ type InspectedMetadata struct {
 	// Only populated for initramfs/fallback images.
 	CompressFormat string
 
-	// Cmdline is the embedded kernel command line. Only populated for UKIs
-	// (from the .cmdline PE section).
+	// Cmdline is the embedded kernel command line (UKIs only). For multi-profile
+	// UKIs this is the base; per-profile overrides live in Profiles.
 	Cmdline string
+
+	// IsMultiProfile is true when the UKI carries one or more .profile sections.
+	IsMultiProfile bool
+
+	// Profiles is the list of .profile sections in PE order. Empty for
+	// single-profile UKIs.
+	Profiles []UKIProfile
 
 	// OSReleaseID identifies the OS image baked into a UKI (e.g., "arch",
 	// "fedora"). Read from the ID= field of the .osrel PE section.
@@ -167,6 +174,15 @@ type InspectedMetadata struct {
 	// MicrocodeProcessorSignatures lists the CPU identifier of each block:
 	// processor_signature for Intel, processor_rev_id for AMD.
 	MicrocodeProcessorSignatures []uint32
+}
+
+// UKIProfile is one profile inside a multi-profile UKI.
+// https://uapi-group.org/specifications/specs/unified_kernel_image/
+type UKIProfile struct {
+	Index   int    // 0-based PE order; @0 is the default (firmware-direct boot uses it)
+	ID      string // from .profile ID= field; the selector value passed via "@<ID>"
+	Title   string // from .profile TITLE= field
+	Cmdline string // per-profile override if present, otherwise inherited base
 }
 
 // BootImage is a discovered boot image file. Inspected is nil when binary
