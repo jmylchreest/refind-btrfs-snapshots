@@ -60,12 +60,18 @@ uki:
     # 0 = unlimited (inherits snapshot.selection_count — caller beware).
     recent: 3
 
-    # Minimum clones per kernel that still has retained snapshots, in addition
-    # to whatever `recent` covers. Default 1 guarantees at least one direct-
-    # bootable recovery target per historical kernel — without this, right after
-    # a kernel upgrade the "newest N" all become current-kernel and direct-
-    # firmware-boot loses access to older-kernel snapshots (multi-profile mode's
-    # @0 still covers them, but only via sd-stub-aware boot paths).
+    # Minimum direct-bootable recovery targets per kernel that still has retained
+    # snapshots, on top of whatever `recent` covers. Default 1 guarantees one
+    # direct-firmware-bootable target per historical kernel.
+    #
+    # Implicitly satisfied by a managed UKI for the same kernel — when multi-
+    # profile mode is active, that managed UKI's profile @0 already boots the
+    # newest snapshot of its kernel under direct firmware boot (firmware has no
+    # @N selector so it always picks profile 0). So with modes: [clone,
+    # multi-profile] this knob effectively adds no extra clones (no double-up).
+    # With modes: [clone] alone, it adds 1 clone per historical kernel —
+    # the only direct-firmware path for those snapshots.
+    #
     # Retires naturally as the underlying snapshots age out of btrfs retention.
     # 0 = no per-kernel guarantee (only recency-driven clones).
     per_kernel_minimum: 1
@@ -144,21 +150,33 @@ This means the clone set **always tracks the newest N**, even on a tight ESP —
 
 The refusal reason and orphan state are recorded in a small state file under `/var/lib/uki-btrfs-snapshots/` so they survive until the next successful run.
 
-**Worked walk-through** — 3 kernel upgrades over 24 days, hourly + daily snapshots (24+24 retention). "Steady state" means a few days after the kernel change so the new kernel has accumulated >3 snapshots.
+**Worked walk-through** — 3 kernel upgrades over 24 days, hourly + daily snapshots (24+24 retention). "Steady state" = a few days after the kernel change so the new kernel has accumulated >3 snapshots.
 
-| Phase | Managed UKIs | Clones (recent=3) | + per_kernel_min=1 adds | Total clones | Total `.efi` (managed + clones) |
+With the default `modes: [clone, multi-profile]`: managed UKIs cover the "per-kernel direct-bootable target" need (each has profile @0 = newest snapshot for its kernel), so `per_kernel_minimum: 1` adds no extra clones. Each upgrade adds only the new kernel's managed UKI:
+
+| Phase | Managed UKIs | Recency clones | per_kernel_min adds | Total clones | Total `.efi` |
 |---|---|---|---|---|---|
-| Day 7 (steady on A) | A | 3 A | — (A already covered) | 3 | **4** |
-| Day 12 (steady after A→B) | A, B | 3 B | 1 A | 4 | **6** |
-| Day 20 (steady after B→C) | A, B, C | 3 C | 1 B + 1 A | 5 | **8** |
-| Day 28 (steady after C→D) | A, B, C, D | 3 D | 1 C + 1 B + 1 A | 6 | **10** |
-| Day 32 (A snapshots pruned from btrfs) | B, C, D | 3 D | 1 C + 1 B | 5 | **8** |
+| Day 7 (steady on A) | A | 3 A | — | 3 | **4** |
+| Day 12 (steady after A→B) | A, B | 3 B | — (A covered by managed UKI A) | 3 | **5** |
+| Day 20 (steady after B→C) | A, B, C | 3 C | — | 3 | **6** |
+| Day 28 (steady after C→D) | A, B, C, D | 3 D | — | 3 | **7** |
+| Day 32 (A's snapshots aged out) | B, C, D | 3 D | — | 3 | **6** |
 
-(Plus the kernel-install-owned live UKI, untouched — add 1 to each row for total ESP UKI count.)
+With `modes: [clone]` alone: no managed UKIs, so `per_kernel_minimum: 1` adds one clone per historical kernel as the only direct-firmware path:
 
-Clone count grows with kernel diversity in the snapshot window, not with snapshot count. Historical-kernel clones retire automatically when the last compatible snapshot ages out of btrfs retention.
+| Phase | Managed UKIs | Recency clones | per_kernel_min adds | Total `.efi` |
+|---|---|---|---|---|
+| Day 7 | — | 3 A | — | **3** |
+| Day 12 | — | 3 B | 1 A | **4** |
+| Day 20 | — | 3 C | 1 B + 1 A | **5** |
+| Day 28 | — | 3 D | 1 C + 1 B + 1 A | **6** |
+| Day 32 | — | 3 D | 1 C + 1 B | **5** |
 
-If the footprint is too aggressive: `modes: [multi-profile]` drops all clones; `clone.recent: 2` reduces the recency window; `clone.per_kernel_minimum: 0` removes the per-kernel safety net (reverts to recency-only). If still too much, set `modes: []` to opt out.
+(In both, add 1 for the kernel-install-owned live UKI on the ESP.)
+
+The two designs converge at "+1 per kernel upgrade" — once a kernel becomes historical it adds one artefact (either a managed UKI in mode 2, or a per_kernel_minimum clone in mode 1). Historical kernels retire automatically when their last compatible snapshot ages out of btrfs retention.
+
+If the footprint is too aggressive: `modes: [multi-profile]` drops all clones (only managed UKIs remain); `clone.recent: 2` reduces the recency window; `clone.per_kernel_minimum: 0` removes the per-kernel safety net for clone-only mode (irrelevant when multi-profile is also on). If still too much, set `modes: []` to opt out.
 
 If you want a hard upper bound regardless of how many kernels are in play, set `clone.maximum_total: N`.
 
