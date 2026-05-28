@@ -30,7 +30,7 @@ Full documentation for `refind-btrfs-snapshots`. For installation and quick star
 - [Integration Examples](#integration-examples)
 - [Time and Format Handling](#time-and-format-handling)
 - [Troubleshooting](#troubleshooting)
-- [Future Bootloader Support](#future-bootloader-support)
+- [Bootloader Coverage](#bootloader-coverage)
 - [Development](#development)
 
 ## How It Works
@@ -97,7 +97,7 @@ The classic layout: kernel, initramfs, and microcode live as separate files (typ
 
 A drop-in `.conf` file under `<esp>/loader/entries/*.conf` describes the entry. The `.conf` names a `linux` (kernel) path, one or more `initrd` paths, and an `options` string. The referenced files live elsewhere on the ESP. Spec: <https://uapi-group.org/specifications/specs/boot_loader_specification/#type-1-boot-loader-specification-entries>.
 
-> **rEFInd does not parse BLS `.conf` files.** This tool reads them as a discovery signal — we use them to learn the canonical kernel and cmdline for a kernel — but the rEFInd output we generate references the underlying loose files. **Output shape for BLS layout is identical to Split layout.** If your system boots exclusively via systemd-boot, see [Future Bootloader Support](#future-bootloader-support).
+> **rEFInd does not parse BLS `.conf` files.** This tool reads them as a discovery signal — we use them to learn the canonical kernel and cmdline for a kernel — but the rEFInd output we generate references the underlying loose files. **Output shape for BLS layout is identical to Split layout.** If your system boots exclusively via systemd-boot, see [Bootloader Coverage](#bootloader-coverage).
 
 ### UKI Layout (Unified Kernel Image, BLS Type #2)
 
@@ -633,20 +633,20 @@ sudo refind-btrfs-snapshots generate --log-level debug --dry-run
 
 Shows: ESP detection, snapshot discovery, boot image scanning, kernel version inspection, boot mode detection per snapshot, staleness results, configuration resolution, and entry generation.
 
-## Future Bootloader Support
+## Bootloader Coverage
 
-`refind-btrfs-snapshots` currently generates rEFInd configuration only. The discovery layer — kernel scanning, UKI inspection (`debug/pe`), microcode parsing, BLS Type #1 entry parsing — is intentionally bootloader-agnostic. The `BootLayout` model (`split`, `bls`, `uki`) describes how kernel artefacts are arranged on disk, independent of which bootloader will consume them.
+`refind-btrfs-snapshots` writes rEFInd-native configuration. The shared discovery layer (kernel scanning, UKI inspection, microcode parsing, BLS Type #1 entry parsing) is bootloader-agnostic, which lets the repo also ship sibling binaries for other bootloaders.
 
-This leaves room for future support of additional bootloaders:
+| Bootloader      | Repository binary                | Snapshot booting     | Notes                                                                                                            |
+|-----------------|----------------------------------|----------------------|------------------------------------------------------------------------------------------------------------------|
+| rEFInd          | `refind-btrfs-snapshots`         | ESP + btrfs modes    | This binary. Treats UKIs as standard EFI loaders for discovery only; see [UKI Layout](#uki-layout-unified-kernel-image-bls-type-2). |
+| systemd-boot    | `bls-btrfs-snapshots`            | ESP mode only        | Writes spec-conformant BLS Type #1 `.conf` entries under `<esp>/loader/entries/`. Released on GitHub.            |
+| BLS-aware GRUB  | `bls-btrfs-snapshots`            | ESP mode only        | Same `.conf` output; works wherever `GRUB_ENABLE_BLSCFG=true`.                                                   |
+| non-BLS GRUB    | (none yet)                       | —                    | Not currently planned.                                                                                           |
+| limine          | (none yet)                       | —                    | Not currently planned.                                                                                           |
+| UKI host        | (planned)                        | —                    | A `uki-btrfs-snapshots` binary that clones UKIs per snapshot is on the wishlist; see [WISHLIST.md](WISHLIST.md). |
 
-| Bootloader      | Native BLS Type #1 | Native UKI | Notes                                                       |
-|-----------------|--------------------|------------|-------------------------------------------------------------|
-| rEFInd          | No (autoscan only) | Yes (as EFI binary) | Current default. Treats UKIs as standard EFI loaders. |
-| systemd-boot    | Yes                | Yes        | Natural fit for BLS-discovered systems.                     |
-| GRUB            | With `GRUB_ENABLE_BLSCFG` | Yes (chainload) | Fedora and derivatives default to BLS.                 |
-| limine          | Partial            | Yes        | Newer; ongoing BLS support.                                 |
-
-Until additional bootloader generators are implemented, the `kernel-spy` development tool (built from this repository, not installed via the AUR package) can be used to inspect what is discovered on disk across all three layouts.
+For inspecting what the discovery layer sees on a given host — useful regardless of which generator binary you use — the `kernel-spy` helper utility is released on GitHub alongside the others. It dumps every detected kernel image, initramfs, microcode blob, BLS entry, and UKI without modifying anything.
 
 ## Development
 

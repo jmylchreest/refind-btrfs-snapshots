@@ -1,6 +1,5 @@
 # refind-btrfs-snapshots Makefile
 
-BINARY    := refind-btrfs-snapshots
 MODULE    := github.com/jmylchreest/refind-btrfs-snapshots
 VERSION   ?= dev
 COMMIT    := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -8,17 +7,30 @@ DATE      := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 GOARCH    ?= $(shell go env GOARCH)
 GOOS      ?= linux
 
+# Binaries this repo builds. Per-binary build targets are derived from this list.
+BINARIES  := refind-btrfs-snapshots bls-btrfs-snapshots kernel-spy
+
+# ldflags inject build metadata into internal/version, which every binary that
+# wires it (refind, bls) reads from. kernel-spy doesn't import internal/version;
+# Go's linker silently ignores -X targets that don't resolve in the final binary,
+# so the same ldflags string works for all three.
 LDFLAGS   := -s -w \
-  -X '$(MODULE)/cmd.Version=$(VERSION)' \
-  -X '$(MODULE)/cmd.Commit=$(COMMIT)' \
-  -X '$(MODULE)/cmd.BuildTime=$(DATE)'
+  -X '$(MODULE)/internal/version.Version=$(VERSION)' \
+  -X '$(MODULE)/internal/version.Commit=$(COMMIT)' \
+  -X '$(MODULE)/internal/version.BuildTime=$(DATE)'
 
-.PHONY: build test vet lint clean release tag help
+MAN_DIR   := docs/man
 
-## build: Build the binary for the current platform
+.PHONY: build test vet lint check coverage docs docs-clean clean release tag help
+
+## build: Build all binaries for the current platform into dist/
 build:
-	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		go build -ldflags "$(LDFLAGS)" -o dist/$(BINARY) .
+	@mkdir -p dist
+	@for bin in $(BINARIES); do \
+	  echo "  -> dist/$$bin"; \
+	  CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
+	    go build -ldflags "$(LDFLAGS)" -o dist/$$bin ./cmd/$$bin || exit 1; \
+	done
 
 ## test: Run tests with race detection
 test:
@@ -40,6 +52,25 @@ coverage:
 	go test -race -coverprofile=coverage.out -covermode=atomic ./...
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
+
+## docs: Regenerate committed man pages under docs/man/ from cobra command trees
+##
+## Uses each binary's hidden gen-docs subcommand, gated behind the `gendocs`
+## build tag so the doc-generation transitive deps (go-md2man) never ship in
+## release binaries. Run after editing any cobra Use/Short/Long/flag definition.
+docs: docs-clean
+	@mkdir -p $(MAN_DIR)
+	@TMP=$$(mktemp -d) && \
+	  go build -tags=gendocs -o $$TMP/refind-btrfs-snapshots ./cmd/refind-btrfs-snapshots && \
+	  $$TMP/refind-btrfs-snapshots gen-docs $(MAN_DIR) && \
+	  go build -tags=gendocs -o $$TMP/bls-btrfs-snapshots    ./cmd/bls-btrfs-snapshots    && \
+	  $$TMP/bls-btrfs-snapshots gen-docs $(MAN_DIR) && \
+	  rm -rf $$TMP
+	@echo "Generated man pages:"
+	@ls $(MAN_DIR)/ | sed 's/^/  /'
+
+docs-clean:
+	@rm -f $(MAN_DIR)/*.1
 
 ## clean: Remove build artifacts
 clean:

@@ -119,12 +119,25 @@ UKIs are **discovered and inspected** — they appear in `list bootsets`, `statu
 
 **Q: I use systemd-boot's BLS `.conf` files. Do they affect anything?**
 
-We discover and parse `/loader/entries/*.conf` for diagnostics (visible in `kernel-spy`), but rEFInd itself does not read BLS `.conf` files. For rEFInd output, BLS-tagged boot sets are generated with the same shape as Split sets (loose kernel/initrd references). Native systemd-boot output is planned — see [Future Bootloader Support](docs/USAGE.md#future-bootloader-support).
+For rEFInd output, BLS-tagged boot sets are generated with the same shape as Split sets (loose kernel/initrd references). If you boot systemd-boot (or BLS-aware GRUB) directly, see the [`bls-btrfs-snapshots`](#related-binaries) sibling binary, which writes the spec-conformant `.conf` entries those bootloaders consume.
+
+## Related binaries
+
+This repository ships three binaries built from a shared core (snapshot discovery, kernel/UKI inspection, fstab alignment, planner). Each one targets a different bootloader story; install the one(s) you need.
+
+| Binary | Purpose | Released as |
+|---|---|---|
+| `refind-btrfs-snapshots` | Generate rEFInd `submenuentry` blocks for each snapshot. Supports both ESP-mode and btrfs-mode snapshots via rEFInd's btrfs driver. | AUR + GitHub Releases |
+| `bls-btrfs-snapshots` | Generate Boot Loader Specification Type #1 `.conf` entries under `<esp>/loader/entries/` for systemd-boot and BLS-aware GRUB. ESP-mode snapshots only. | GitHub Releases |
+| `kernel-spy` | Read-only diagnostic — dumps every kernel image, initramfs, microcode, BLS entry, and UKI the discovery layer can see on a host. Useful for debugging snapshot-bootability questions. | GitHub Releases (no AUR; helper utility) |
+
+A planned `uki-btrfs-snapshots` binary that would make UKI hosts snapshot-bootable by cloning UKIs per snapshot is tracked in [`docs/WISHLIST.md`](docs/WISHLIST.md).
 
 ## Links
 
 - [Usage Guide](docs/USAGE.md) — full documentation
 - [Configuration File](configs/refind-btrfs-snapshots.yaml) — annotated defaults
+- [Wishlist](docs/WISHLIST.md) — planned features
 - [Issue Tracker](https://github.com/jmylchreest/refind-btrfs-snapshots/issues)
 - [Releases](https://github.com/jmylchreest/refind-btrfs-snapshots/releases)
-- [AUR Package](https://aur.archlinux.org/packages/refind-btrfs-snapshots-bin)
+- [AUR Package](https://aur.archlinux.org/packages/refind-btrfs-snapshots-bin) (refind binary only)
