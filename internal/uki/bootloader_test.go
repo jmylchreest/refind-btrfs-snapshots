@@ -26,8 +26,9 @@ import (
 //     shows what would change without dumping binary into the patch.
 //   - On-disk files in OutputDir matching the prefix that aren't in the
 //     expected set are emitted as orphan FileDiff removals (Modified="").
-//   - Source UKIs whose base filename already starts with EntryPrefix are
-//     dropped — never clone our own previous output.
+//
+// Filtering of input.SourceUKIs (Layout=UKI, managed-prefix recursion
+// guard) is the cmd's job — see cmd/uki-btrfs-snapshots filter tests.
 
 func cfgWith(write bool, outputDir, prefix string) *config.Config {
 	return &config.Config{
@@ -113,24 +114,8 @@ func TestUKIGenerator_EmitsBinaryWritePerPair(t *testing.T) {
 	}
 }
 
-func TestUKIGenerator_DropsOwnManagedSources(t *testing.T) {
-	espDir := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(espDir, "EFI", "Linux"), 0o755))
-
-	managed := srcUKI(t, "uki-btrfs-snapshots-99-linux")
-	pristine := srcUKI(t, "linux")
-
-	input := bootloader.Input{
-		Cfg:                cfgWith(true, "/EFI/Linux", "uki-btrfs-snapshots-"),
-		ESPPath:            espDir,
-		ProcessedSnapshots: []*btrfs.Snapshot{newSnap(256, "@/.snapshots/1/snapshot")},
-		SourceUKIs:         []*kernel.BootSet{managed, pristine},
-	}
-
-	out, err := NewGenerator().Generate(input)
-	require.NoError(t, err)
-	require.Len(t, out.BinaryWrites, 1, "must skip the managed-prefix source")
-	assert.Contains(t, out.BinaryWrites[0].Path, "uki-btrfs-snapshots-256-linux.efi")
+func TestUKIGenerator_Name(t *testing.T) {
+	assert.Equal(t, "uki", NewGenerator().Name())
 }
 
 func TestUKIGenerator_OrphanCleanup(t *testing.T) {
@@ -205,4 +190,37 @@ func TestApply_WritesBinaryAndRemovesOrphans(t *testing.T) {
 	// the orphan got removed
 	_, err = os.Stat(orphanPath)
 	assert.True(t, os.IsNotExist(err), "orphan should be removed, got err=%v", err)
+}
+
+func TestApply_DryRunTouchesNothing(t *testing.T) {
+	espDir := t.TempDir()
+	outDir := filepath.Join(espDir, "EFI", "Linux")
+	require.NoError(t, os.MkdirAll(outDir, 0o755))
+
+	orphanPath := filepath.Join(outDir, "uki-btrfs-snapshots-99-linux.efi")
+	require.NoError(t, os.WriteFile(orphanPath, []byte("stale"), 0o644))
+
+	input := bootloader.Input{
+		Cfg:                cfgWith(true, "/EFI/Linux", "uki-btrfs-snapshots-"),
+		ESPPath:            espDir,
+		ProcessedSnapshots: []*btrfs.Snapshot{newSnap(300, "@/.snapshots/3/snapshot")},
+		SourceUKIs:         []*kernel.BootSet{srcUKI(t, "linux")},
+	}
+	out, err := NewGenerator().Generate(input)
+	require.NoError(t, err)
+
+	require.NoError(t, Apply(out, runner.New(true)))
+
+	// orphan stays on disk
+	_, err = os.Stat(orphanPath)
+	assert.NoError(t, err, "dry-run must not remove orphans")
+
+	// no new clones written
+	clones, err := filepath.Glob(filepath.Join(outDir, "uki-btrfs-snapshots-300-*.efi"))
+	require.NoError(t, err)
+	assert.Empty(t, clones, "dry-run must not write clones")
+}
+
+func TestApply_NilOutput(t *testing.T) {
+	assert.NoError(t, Apply(nil, runner.New(false)))
 }

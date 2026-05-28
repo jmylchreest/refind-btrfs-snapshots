@@ -15,10 +15,9 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// NewGenerator returns the UKI cloner as a bootloader.Generator. Its
-// Generate is a no-op when cfg.UKI.WriteEntries is false. Apply is a
-// package-level helper rather than a method so the cmd can reuse the
-// same orphan-removal path even after the generator instance is gone.
+// NewGenerator returns the UKI cloner as a bootloader.Generator. Apply
+// is a package-level helper rather than a method because the binary
+// writes and orphan removals are stateless operations on the Output.
 func NewGenerator() bootloader.Generator {
 	return &generator{}
 }
@@ -36,8 +35,7 @@ func (g *generator) Generate(input bootloader.Input) (*bootloader.Output, error)
 	cfg := input.Cfg.UKI
 	outputDir := filepath.Join(input.ESPPath, strings.TrimPrefix(cfg.OutputDir, "/"))
 
-	sources := filterSources(input.SourceUKIs, cfg.EntryPrefix)
-	expected, err := buildClones(sources, input.ProcessedSnapshots, outputDir, cfg.EntryPrefix)
+	expected, err := buildClones(input.SourceUKIs, input.ProcessedSnapshots, outputDir, cfg.EntryPrefix)
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +49,6 @@ func (g *generator) Generate(input bootloader.Input) (*bootloader.Output, error)
 		out.Diffs = append(out.Diffs, &diff.FileDiff{
 			Path:     e.Path,
 			IsNew:    true,
-			Original: "",
 			Modified: e.Descriptor,
 		})
 	}
@@ -78,10 +75,6 @@ func (g *generator) Generate(input bootloader.Input) (*bootloader.Output, error)
 	return out, nil
 }
 
-// clonePlan is the internal record returned by buildClones: an in-memory
-// (path, bytes, descriptor) triple per (snapshot × source) pair. Descriptor
-// is a short text record used for the dry-run/confirm display so the user
-// sees what would change without dumping binary into the patch.
 type clonePlan struct {
 	Path       string
 	Content    []byte
@@ -89,18 +82,16 @@ type clonePlan struct {
 	SnapshotID uint64
 }
 
-// buildClones reads each source UKI from disk, rewrites its .cmdline for
-// each snapshot, and returns the planned writes. The source bytes are read
-// once and re-cloned per snapshot to avoid keeping multiple full UKIs
-// resident; this is acceptable because the parse cost is small relative to
-// the write cost.
+// buildClones reads each source UKI once and re-emits it per snapshot
+// with the .cmdline rewritten. Reading once keeps memory bounded to a
+// single source UKI at a time even when fanning out across many snapshots.
 func buildClones(sources []*kernel.BootSet, snaps []*btrfs.Snapshot, outputDir, prefix string) ([]*clonePlan, error) {
 	var plans []*clonePlan
 	for _, src := range sources {
 		if src == nil || src.UKI == nil {
 			continue
 		}
-		srcPath := sourceAbsPath(src)
+		srcPath := src.UKI.AbsPath
 		srcBytes, err := os.ReadFile(srcPath)
 		if err != nil {
 			return nil, fmt.Errorf("read source UKI %s: %w", srcPath, err)
@@ -123,39 +114,12 @@ func buildClones(sources []*kernel.BootSet, snaps []*btrfs.Snapshot, outputDir, 
 			plans = append(plans, &clonePlan{
 				Path:       dst,
 				Content:    clone,
-				Descriptor: descriptorFor(srcPath, dst, newCmdline),
+				Descriptor: fmt.Sprintf("# UKI clone\nsource: %s\ndest:   %s\ncmdline: %s\n", srcPath, dst, newCmdline),
 				SnapshotID: snap.ID,
 			})
 		}
 	}
 	return plans, nil
-}
-
-// sourceAbsPath returns the absolute filesystem path of a source UKI,
-// preferring AbsPath but falling back to Path so test fixtures that
-// only populate one field still work.
-func sourceAbsPath(src *kernel.BootSet) string {
-	if src.UKI.AbsPath != "" {
-		return src.UKI.AbsPath
-	}
-	return src.UKI.Path
-}
-
-// filterSources drops sources whose UKI filename already matches the
-// managed prefix — those are our own previous clones and must never be
-// used as sources, or each run would double the clone count.
-func filterSources(sources []*kernel.BootSet, prefix string) []*kernel.BootSet {
-	var out []*kernel.BootSet
-	for _, s := range sources {
-		if s == nil || s.UKI == nil {
-			continue
-		}
-		if prefix != "" && strings.HasPrefix(filepath.Base(s.UKI.Path), prefix) {
-			continue
-		}
-		out = append(out, s)
-	}
-	return out
 }
 
 func findOrphans(outputDir, prefix string, expected map[string]bool) ([]*diff.FileDiff, error) {
@@ -200,14 +164,10 @@ func fileSize(path string) int64 {
 	return info.Size()
 }
 
-func descriptorFor(srcPath, dstPath, newCmdline string) string {
-	return fmt.Sprintf("# UKI clone\nsource: %s\ndest:   %s\ncmdline: %s\n", srcPath, dstPath, newCmdline)
-}
-
 // Apply writes every BinaryWrite via the runner and removes orphan
-// FileDiffs (those with IsNew=false && Modified=""). The text-diff
-// pipeline (diff.Apply) handles the descriptor FileDiffs as a no-op
-// write — Apply here is the binary-aware counterpart.
+// FileDiffs (IsNew=false, Modified=""). It exists because the byte
+// payloads can't go through diff.Apply — the text-diff pipeline would
+// mangle the binary on display and is only safe for descriptor diffs.
 func Apply(out *bootloader.Output, r runner.Runner) error {
 	if out == nil {
 		return nil

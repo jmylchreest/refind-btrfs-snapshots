@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/bootloader"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
@@ -40,9 +41,6 @@ func loadConfig(cmd *cobra.Command) (*config.Config, error) {
 	return cliconfig.Load(cmd, "/etc/uki-btrfs-snapshots.yaml", ukiFlagToKey)
 }
 
-// runGenerate is a scaffold: it loads config, checks the opt-in gate, and
-// reports how many cloned UKIs would be emitted. The actual clone-and-write
-// logic lands in the next slice.
 func runGenerate(cmd *cobra.Command, args []string) error {
 	cfg, err := loadConfig(cmd)
 	if err != nil {
@@ -142,26 +140,21 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// filterUKIBootSets returns boot sets whose layout is UKI and whose UKI
-// filename does NOT already match the managed prefix (so we never clone our
-// own previous output as a source).
+// filterUKIBootSets keeps UKI-layout sets that aren't already our own
+// managed clones — feeding a clone back as a source would double the
+// clone count every run.
 func filterUKIBootSets(bootSets []*kernel.BootSet, managedPrefix string) []*kernel.BootSet {
 	var out []*kernel.BootSet
 	for _, bs := range bootSets {
 		if bs.Layout != kernel.LayoutUKI || bs.UKI == nil {
 			continue
 		}
-		if managedPrefix != "" && filenameHasPrefix(bs.UKI.Path, managedPrefix) {
+		if managedPrefix != "" && strings.HasPrefix(filepath.Base(bs.UKI.Path), managedPrefix) {
 			continue
 		}
 		out = append(out, bs)
 	}
 	return out
-}
-
-func filenameHasPrefix(path, prefix string) bool {
-	base := filepath.Base(path)
-	return len(base) >= len(prefix) && base[:len(prefix)] == prefix
 }
 
 // patternsFromConfig drops invalid roles and returns the typed list the
