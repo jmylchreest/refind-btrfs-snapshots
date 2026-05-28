@@ -1,39 +1,177 @@
 .nh
-.TH "REFIND-BTRFS-SNAPSHOTS" "1" "May 2026" "refind-btrfs-snapshots" "refind-btrfs-snapshots Manual"
-
+.TH refind-btrfs-snapshots 1
 .SH NAME
-refind-btrfs-snapshots - Generate rEFInd boot entries for btrfs snapshots
-
+refind-btrfs-snapshots \- Generate rEFInd boot entries for btrfs snapshots
 
 .SH SYNOPSIS
-\fBrefind-btrfs-snapshots [flags]\fP
-
+\fBrefind-btrfs-snapshots\fP [\fIglobal options\fP] \fICOMMAND\fP [\fIargs\fP]
 
 .SH DESCRIPTION
 Generate rEFInd boot menu entries for btrfs snapshots with automatic
 ESP detection, snapshot discovery, and configuration management.
 
+.SH GLOBAL OPTIONS
+.EX
+      --config string      config file (default is /etc/refind-btrfs-snapshots.yaml)
+      --local-time         Display times in local time instead of UTC
+      --log-level string   log level (trace, debug, info, warn, error, fatal, panic) (default "info")
+.EE
 
-.SH OPTIONS
-\fB--config\fP=""
-	config file (default is /etc/refind-btrfs-snapshots.yaml)
-
-.PP
-\fB-h\fP, \fB--help\fP[=false]
-	help for refind-btrfs-snapshots
-
-.PP
-\fB--local-time\fP[=false]
-	Display times in local time instead of UTC
+.SH COMMANDS
+.SS refind-btrfs-snapshots generate
+Generate rEFInd boot entries for btrfs snapshots
 
 .PP
-\fB--log-level\fP="info"
-	log level (trace, debug, info, warn, error, fatal, panic)
+Generate rEFInd boot configuration files for btrfs snapshots.
 
+.PP
+Automatically detects snapshots, updates fstab files, and creates boot entries.
+Prefers refind_linux.conf updates but can generate include files when needed.
+
+.PP
+\fBUsage:\fP \fBrefind-btrfs-snapshots generate [flags]\fR
+
+.PP
+\fBOptions:\fP
+
+.EX
+      --config-path string   Path to rEFInd main config file
+  -n, --count int            Number of snapshots to include (0 = all snapshots)
+      --dry-run              Show what would be done without making changes
+  -e, --esp-path string      Path to ESP mount point
+      --force                Force generation even if booted from snapshot
+  -g, --generate-include     Force generation of refind-btrfs-snapshots.conf for inclusion into refind.conf
+  -y, --yes                  Automatically approve all changes without prompting
+.EE
+
+.SS refind-btrfs-snapshots list
+List btrfs volumes and snapshots
+
+.PP
+List btrfs volumes and snapshots. Requires a subcommand (volumes or snapshots).
+
+.PP
+\fBUsage:\fP \fBrefind-btrfs-snapshots list\fR
+
+.SS refind-btrfs-snapshots list bootsets
+List detected boot image sets on the ESP
+
+.PP
+Scan the EFI System Partition for boot images and display the detected boot sets.
+
+.PP
+Each boot set groups related boot images by kernel name (e.g., "linux", "linux-lts").
+A boot set typically contains a kernel, its matching initramfs, an optional fallback
+initramfs, and any shared microcode images.
+
+.PP
+The command also inspects kernel binaries to extract version strings from their
+bzImage headers when possible.
+
+.PP
+\fBUsage:\fP \fBrefind-btrfs-snapshots list bootsets [flags]\fR
+
+.PP
+\fBOptions:\fP
+
+.EX
+      --json          Output in JSON format
+      --show-images   Show individual boot images in addition to boot sets
+.EE
+
+.SS refind-btrfs-snapshots list snapshots
+List all snapshots for detected volumes
+
+.PP
+List all snapshots for each detected btrfs volume.
+
+.PP
+Shows snapshot path, creation time, and parent volume for each snapshot.
+
+.PP
+Size calculation (--show-size) performance:
+  • Fast: Uses btrfs quotas if already enabled
+  • Slower: Falls back to native file scanning with progress indicator
+  • Note: Large snapshots may take time to calculate
+
+.PP
+\fBUsage:\fP \fBrefind-btrfs-snapshots list snapshots [flags]\fR
+
+.PP
+\fBOptions:\fP
+
+.EX
+      --json                  Output in JSON format
+      --search-dirs strings   Override snapshot search directories
+      --show-size             Show snapshot sizes (slower)
+      --show-volume           Show volume column (useful for multi-filesystem setups)
+      --volume string         Show snapshots only for specific volume UUID or device
+.EE
+
+.SS refind-btrfs-snapshots list volumes
+List all btrfs filesystems/volumes
+
+.PP
+List all btrfs filesystems/volumes detected on the system.
+
+.PP
+Shows device path, mount point, and the best available identifier for each volume.
+The IDENTIFIER column shows the preferred identifier value, and TYPE shows what
+kind of identifier it is (UUID, PARTUUID, LABEL, PARTLABEL, or DEVICE).
+
+.PP
+\fBUsage:\fP \fBrefind-btrfs-snapshots list volumes [flags]\fR
+
+.PP
+\fBOptions:\fP
+
+.EX
+      --json           Output in JSON format
+      --show-all-ids   Show all device identifiers (UUID, PARTUUID, LABEL, etc.)
+.EE
+
+.SS refind-btrfs-snapshots status
+Show snapshot bootability against detected ESP boot sets
+
+.PP
+Show the bootability status of every snapshot against every detected boot set.
+
+.PP
+This is the diagnostic command for answering "if my /boot breaks, which of my
+snapshots are real fallbacks?" It joins the snapshot inventory (from btrfs) with
+the boot image inventory (from the ESP) and renders a compatibility matrix.
+
+.PP
+Each row is a snapshot; each kernel column shows whether the snapshot's modules
+match that kernel's version (fresh) or not (stale). Snapshots in btrfs-mode
+embed their own kernel and are marked n/a — staleness is impossible for them.
+
+.PP
+\fBUsage:\fP \fBrefind-btrfs-snapshots status [flags]\fR
+
+.PP
+\fBOptions:\fP
+
+.EX
+      --json              Output in JSON format
+      --unbootable-only   Show only snapshots that are stale or unbootable against all boot sets
+.EE
+
+.SS refind-btrfs-snapshots version
+Show version information
+
+.PP
+Display version information including build details.
+
+.PP
+This command shows:
+- Application version
+- Git commit hash
+- Build timestamp
+- Go version used for compilation
+
+.PP
+\fBUsage:\fP \fBrefind-btrfs-snapshots version\fR
 
 .SH SEE ALSO
-\fBrefind-btrfs-snapshots-completion(1)\fP, \fBrefind-btrfs-snapshots-generate(1)\fP, \fBrefind-btrfs-snapshots-list(1)\fP, \fBrefind-btrfs-snapshots-status(1)\fP, \fBrefind-btrfs-snapshots-version(1)\fP
-
-
-.SH HISTORY
-28-May-2026 Auto generated by spf13/cobra
+bls-btrfs-snapshots(1), kernel-spy(1)
