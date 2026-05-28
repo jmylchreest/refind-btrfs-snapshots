@@ -27,9 +27,6 @@ func Defaults() Config {
 		Kernel: KernelConfig{
 			StaleSnapshotAction: "delete",
 		},
-		UKI: UKIConfig{
-			SnapshotStrategy: "skip",
-		},
 		BLS: BLSConfig{
 			WriteEntries: Truthy(false),
 			EntriesDir:   "/loader/entries",

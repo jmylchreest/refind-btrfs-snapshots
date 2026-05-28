@@ -92,8 +92,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 
 	staleAction := kernel.ParseStaleAction(cfg.Kernel.StaleSnapshotAction)
 	checker := kernel.NewChecker(staleAction)
-	ukiStrategy := kernel.ParseUKIStrategy(cfg.UKI.SnapshotStrategy)
-	planner := kernel.NewPlanner(fstab.NewManager(), checker, bootSets, rootFS, ukiStrategy)
+	planner := kernel.NewPlanner(fstab.NewManager(), checker, bootSets, rootFS)
 	plans := planner.Plan(snapshots)
 
 	entriesDir := filepath.Join(espPath, strings.TrimPrefix(cfg.BLS.EntriesDir, "/"))

@@ -233,35 +233,13 @@ func (g *Generator) generateSingleMenuEntry(title string, templateEntry *MenuEnt
 		content.WriteString(fmt.Sprintf("    submenuentry \"%s\" {\n", snapshotTitle))
 
 		plan := g.getBootPlanForSnapshot(snapshot)
-
-		if plan != nil && plan.Layout == kernel.LayoutUKI {
-			g.writeUKISubmenuBody(&content, plan)
-		} else {
-			g.writeSplitSubmenuBody(&content, plan, templateEntry, snapshot)
-		}
-
+		g.writeSplitSubmenuBody(&content, plan, templateEntry, snapshot)
 		content.WriteString("    }\n")
 	}
 
 	content.WriteString("}\n")
 
 	return content.String()
-}
-
-// writeUKISubmenuBody emits no initrd line (embedded in UKI) and no options
-// line (systemd-stub ignores boot-loader-supplied cmdline on standard UKIs).
-func (g *Generator) writeUKISubmenuBody(content *strings.Builder, plan *kernel.BootPlan) {
-	if plan.Disabled {
-		content.WriteString("        disabled\n")
-	}
-	if plan.Mode == kernel.BootModeBtrfs {
-		if plan.BtrfsVolume != "" {
-			content.WriteString(fmt.Sprintf("        volume  %s\n", plan.BtrfsVolume))
-		}
-		if plan.SnapshotKernel != "" {
-			content.WriteString(fmt.Sprintf("        loader  %s\n", plan.SnapshotKernel))
-		}
-	}
 }
 
 // writeSplitSubmenuBody handles both Split- and BLS-layout sets: rEFInd

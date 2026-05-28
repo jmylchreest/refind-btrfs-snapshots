@@ -21,10 +21,6 @@ func TestDefaults(t *testing.T) {
 	assert.True(t, d.Behavior.CleanupOldSnapshots.IsTrue())
 	assert.Equal(t, "delete", d.Kernel.StaleSnapshotAction)
 	assert.Equal(t, "info", d.LogLevel)
-	// uki.snapshot_strategy controls behaviour for ESP-mode UKI snapshot
-	// entries (boot loader cmdline cannot override embedded cmdline).
-	// Default is "skip" — see docs/USAGE.md#uki-snapshots-esp-mode-caveat.
-	assert.Equal(t, "skip", d.UKI.SnapshotStrategy)
 }
 
 func TestValidate(t *testing.T) {
@@ -110,16 +106,6 @@ func TestLoad_FileOverridesDefaults(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "debug", cfg.LogLevel)
 	assert.Equal(t, 7, cfg.Snapshot.MaxDepth)
-}
-
-func TestLoad_UKISnapshotStrategy(t *testing.T) {
-	tmp := t.TempDir()
-	cfgPath := filepath.Join(tmp, "config.yaml")
-	require.NoError(t, os.WriteFile(cfgPath, []byte("uki:\n  snapshot_strategy: warn\n"), 0644))
-
-	cfg, err := Load(cfgPath, nil)
-	require.NoError(t, err)
-	assert.Equal(t, "warn", cfg.UKI.SnapshotStrategy)
 }
 
 func TestLoad_EnvOverridesFile_TopLevelOnly(t *testing.T) {

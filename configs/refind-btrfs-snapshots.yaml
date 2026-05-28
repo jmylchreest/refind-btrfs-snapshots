@@ -98,19 +98,15 @@ kernel:
 
 # Unified Kernel Image (UKI) handling
 #
-# UKIs are discovered and inspected but are not made snapshot-bootable by this
-# tool: the cmdline lives inside the signed .cmdline PE section and there is no
-# generally-reliable boot-loader-side override. Making snapshots bootable for
-# UKI hosts requires rewriting (and re-signing) the UKI per snapshot — tracked
-# as a planned standalone uki-btrfs-snapshots binary (see docs/WISHLIST.md).
+# UKIs are discovered and inspected (they show up in `list bootsets`, `status`,
+# and `kernel-spy`, and contribute their embedded kernel version to staleness
+# detection) but are NEVER made snapshot-bootable by this binary: the cmdline
+# lives inside the signed .cmdline PE section and there is no generally-
+# reliable boot-loader-side override. Making snapshots bootable for UKI hosts
+# requires rewriting (and re-signing) the UKI per snapshot — tracked as a
+# planned standalone uki-btrfs-snapshots binary (see docs/WISHLIST.md).
 #
 # Spec: https://uapi-group.org/specifications/specs/boot_loader_specification/
-uki:
-  # Whether refind menu entries are generated for ESP-mode UKI sets:
-  #   "skip"    - Don't generate menu entries (default, recommended)
-  #   "warn"    - Generate the entry but log that it would boot live root, not the snapshot
-  #   "disable" - Generate the entry with rEFInd's 'disabled' directive (visible but not bootable)
-  snapshot_strategy: "skip"
 
 # BLS Type #1 entry output (consumed by the bls-btrfs-snapshots binary).
 # rEFInd does NOT read these; refind-btrfs-snapshots ignores this block.

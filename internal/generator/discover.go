@@ -57,9 +57,8 @@ func (p *Pipeline) Discover() (*Plan, error) {
 	if len(p.BootSets) > 0 {
 		checker = kernel.NewChecker(staleAction)
 	}
-	ukiStrategy := kernel.ParseUKIStrategy(p.Cfg.UKI.SnapshotStrategy)
-	planner := kernel.NewPlanner(p.Fstab, checker, p.BootSets, rootFS, ukiStrategy)
-	bootPlans := planner.Plan(processed)
+	planner := kernel.NewPlanner(p.Fstab, checker, p.BootSets, rootFS)
+	bootPlans := filterRefindEligible(planner.Plan(processed))
 
 	var removed []string
 	if staleAction == kernel.ActionDelete {
@@ -67,7 +66,7 @@ func (p *Pipeline) Discover() (*Plan, error) {
 		if len(processed) == 0 {
 			log.Warn().Msg("All snapshots were stale and removed (stale_snapshot_action=delete)")
 		}
-		bootPlans = planner.Plan(processed)
+		bootPlans = filterRefindEligible(planner.Plan(processed))
 	}
 
 	return &Plan{
@@ -164,4 +163,22 @@ func filterDeletedStale(snapshots []*btrfs.Snapshot, plans []*kernel.BootPlan) (
 		}
 	}
 	return kept, removed
+}
+
+// filterRefindEligible drops BootPlans the refind binary can't act on. UKI
+// plans get excluded: an ESP-mode UKI's embedded cmdline references the live
+// root subvol, and a btrfs-mode UKI inside a snapshot was likewise built
+// when that snapshot was the live root. Neither honours a boot-loader-
+// supplied snapshot cmdline, so any submenuentry we'd write would boot live
+// root, not the snapshot. Cloning/rewriting UKIs to make snapshots actually
+// bootable is the planned uki-btrfs-snapshots binary's job (see WISHLIST).
+func filterRefindEligible(plans []*kernel.BootPlan) []*kernel.BootPlan {
+	out := make([]*kernel.BootPlan, 0, len(plans))
+	for _, p := range plans {
+		if p == nil || p.Layout == kernel.LayoutUKI {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }

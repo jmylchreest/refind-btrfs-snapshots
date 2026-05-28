@@ -34,10 +34,6 @@ type BootPlan struct {
 	Mode     BootMode
 	Layout   BootLayout
 
-	// Disabled emits rEFInd's `disabled` directive — visible but unbootable.
-	// Set when UKIStrategy=disable on an ESP-mode UKI plan.
-	Disabled bool
-
 	BootSet   *BootSet         // nil for btrfs-mode plans
 	Staleness *StalenessResult // nil for btrfs-mode plans
 
@@ -66,22 +62,22 @@ func (bp *BootPlan) IsStale() bool {
 }
 
 // Planner produces BootPlans by inspecting each snapshot's fstab to decide
-// whether its kernel lives on the ESP or inside the snapshot.
+// whether its kernel lives on the ESP or inside the snapshot. Layout-specific
+// filtering (e.g. refind/bls binaries dropping UKI plans they can't act on)
+// is the consumer's responsibility, not the planner's.
 type Planner struct {
 	fstabManager *fstab.Manager
 	checker      *Checker
 	bootSets     []*BootSet
 	rootFS       *btrfs.Filesystem
-	ukiStrategy  UKIStrategy
 }
 
-func NewPlanner(fstabMgr *fstab.Manager, checker *Checker, bootSets []*BootSet, rootFS *btrfs.Filesystem, ukiStrategy UKIStrategy) *Planner {
+func NewPlanner(fstabMgr *fstab.Manager, checker *Checker, bootSets []*BootSet, rootFS *btrfs.Filesystem) *Planner {
 	return &Planner{
 		fstabManager: fstabMgr,
 		checker:      checker,
 		bootSets:     bootSets,
 		rootFS:       rootFS,
-		ukiStrategy:  ukiStrategy,
 	}
 }
 
@@ -213,14 +209,6 @@ func (p *Planner) planESPMode(snapshot *btrfs.Snapshot) []*BootPlan {
 
 	var plans []*BootPlan
 	for _, bs := range p.bootSets {
-		if bs.Layout == LayoutUKI {
-			plan := p.planESPModeUKI(snapshot, bs)
-			if plan != nil {
-				plans = append(plans, plan)
-			}
-			continue
-		}
-
 		var staleness *StalenessResult
 		if p.checker != nil {
 			staleness = p.checker.CheckSnapshot(snapshot.FilesystemPath, bs)
@@ -252,47 +240,6 @@ func (p *Planner) planESPMode(snapshot *btrfs.Snapshot) []*BootPlan {
 	}
 
 	return plans
-}
-
-// planESPModeUKI applies the UKI strategy to an ESP-mode UKI boot set.
-// Returns nil when the strategy is "skip" (no plan emitted for this snapshot+set).
-// The systemd-stub ignores boot-loader-supplied cmdline on standard UKIs, so
-// an ESP-resident UKI's embedded cmdline points at the live root regardless
-// of any snapshot-targeted options we'd otherwise write.
-func (p *Planner) planESPModeUKI(snapshot *btrfs.Snapshot, bs *BootSet) *BootPlan {
-	switch p.ukiStrategy {
-	case UKIStrategySkip:
-		log.Debug().
-			Str("snapshot", snapshot.Path).
-			Str("kernel", bs.KernelName).
-			Msg("Skipping ESP-mode UKI snapshot entry (uki.snapshot_strategy=skip)")
-		return nil
-	case UKIStrategyWarn:
-		log.Warn().
-			Str("snapshot", snapshot.Path).
-			Str("kernel", bs.KernelName).
-			Msg("ESP-mode UKI snapshot entry will boot live root (uki.snapshot_strategy=warn)")
-		return &BootPlan{
-			Snapshot: snapshot,
-			Mode:     BootModeESP,
-			Layout:   LayoutUKI,
-			BootSet:  bs,
-		}
-	case UKIStrategyDisable:
-		log.Info().
-			Str("snapshot", snapshot.Path).
-			Str("kernel", bs.KernelName).
-			Msg("Marking ESP-mode UKI snapshot entry as disabled (uki.snapshot_strategy=disable)")
-		return &BootPlan{
-			Snapshot: snapshot,
-			Mode:     BootModeESP,
-			Layout:   LayoutUKI,
-			BootSet:  bs,
-			Disabled: true,
-		}
-	default:
-		return nil
-	}
 }
 
 // buildBtrfsVolume returns the best identifier for the root btrfs filesystem

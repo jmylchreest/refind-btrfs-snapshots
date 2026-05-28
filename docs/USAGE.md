@@ -307,7 +307,6 @@ esp:
 | **Logging** | `log_level` | `"info"` | Log verbosity: `trace`, `debug`, `info`, `warn`, `error` |
 | **Kernel** | `kernel.stale_snapshot_action` | `"delete"` | Action for stale snapshots: `delete`, `warn`, `disable`, `fallback` |
 | | `kernel.boot_image_patterns` | *(built-in)* | Custom boot image patterns (see config file) |
-| **UKI** | `uki.snapshot_strategy` | `"skip"` | Whether refind menu entries are generated for ESP-mode UKI sets. `skip` (default) hides them, `warn`/`disable` emit entries that would boot the live root (not the snapshot) — see [UKI Layout](#uki-layout-unified-kernel-image-bls-type-2). |
 | **Advanced** | `advanced.naming.rwsnap_format` | `"2006-01-02_15-04-05"` | Timestamp format for writable snapshot filenames |
 | | `advanced.naming.menu_format` | `"2006-01-02T15:04:05Z"` | Timestamp format for menu entry titles |
 

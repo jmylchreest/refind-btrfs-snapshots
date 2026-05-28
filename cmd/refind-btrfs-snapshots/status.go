@@ -64,8 +64,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	checker := kernel.NewChecker(staleAction)
 	var planner *kernel.Planner
 	if rootFS != nil {
-		ukiStrategy := kernel.ParseUKIStrategy(cfg.UKI.SnapshotStrategy)
-		planner = kernel.NewPlanner(fstabMgr, checker, bootSets, rootFS, ukiStrategy)
+		planner = kernel.NewPlanner(fstabMgr, checker, bootSets, rootFS)
 	}
 
 	matrix := buildCompatibilityMatrix(snapshots, bootSets, planner, checker)
