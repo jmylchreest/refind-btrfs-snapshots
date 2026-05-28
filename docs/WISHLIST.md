@@ -87,17 +87,35 @@ For two-kernel systems: ~420 MB additional (one managed snapshot UKI per kernel 
 
 This comfortably fits a 512 MB ESP with room for other content. The pre-flight check makes "doesn't fit" a hard, actionable error rather than a silent overflow.
 
-**Reconciliation, not append.** Every run computes the desired clone set from scratch (newest N snapshots), scans the ESP under the managed prefix, and reconciles:
+**Reconciliation, not append.** Every run computes the desired set from scratch — covering both clones AND managed snapshot UKIs — scans the ESP under the managed prefix, and reconciles:
 
-1. `to_delete = on_disk − desired` — old clones that aged out of the newest-N window, or clones whose source UKI's cmdline changed.
-2. `to_add = desired − on_disk` — clones for new snapshots not yet on disk.
-3. **Deletions are applied first**, freeing their space.
-4. **Then the pre-flight ESP free-space check runs against the additions only.**
-5. Refuse only if, *even after pruning aged-out clones*, the new additions won't fit. Error: `ESP has X MB free after pruning, need Y MB for new clones. Reduce uki.clone.recent or free non-managed ESP files.`
+1. **Desired set** is computed from the live system:
+   - One managed snapshot UKI per currently-installed kernel (`uki-btrfs-snapshots-<kernel>.efi`)
+   - Clones for the eligible (non-stale, non-deleted) snapshots in the newest-N, named `uki-btrfs-snapshots-<snap-id>-<kernel>.efi` where `<kernel>` is the live kernel that owns that snapshot's boot set
+2. `to_delete = on_disk − desired` catches:
+   - Clones that aged out of the newest-N window
+   - Clones whose snapshot was pruned from btrfs (snapper rotation, manual delete)
+   - Clones whose snapshot became stale relative to the current kernel (the existing `stale_snapshot_action=delete` flow already excludes them from the eligible set, so reconciliation removes them)
+   - Managed snapshot UKIs for kernels that no longer exist on the live system (subject to the `uki.cleanup_removed_kernels` policy — see below)
+3. `to_add = desired − on_disk` catches:
+   - Clones for new snapshots
+   - Managed snapshot UKIs for newly-installed kernels
+   - Managed snapshot UKIs whose underlying live UKI's mtime changed (kernel upgrade)
+4. **Deletions are applied first**, freeing their space.
+5. **Then the pre-flight ESP free-space check runs against the additions only.**
+6. Refuse only if, *even after pruning aged-out files*, the new additions won't fit. Error: `ESP has X MB free after pruning, need Y MB for new artefacts. Reduce uki.clone.recent or free non-managed ESP files.`
+
+**`uki.cleanup_removed_kernels`** (default `false`): when a kernel is uninstalled (e.g., user switches from `linux-cachyos` to `linux-zen`), the managed snapshot UKI and clones for the removed kernel become orphans. Default behaviour is to **keep** them — they're recovery artefacts and removing them silently on a kernel switch is potentially destructive. `status` reports `recovery for removed kernel <name> available; remove with 'uki-btrfs-snapshots prune --removed-kernels'`. Set this to `true` to opt into automatic cleanup (typically only on lab/test systems).
 
 This means the clone set **always tracks the newest N**, even on a tight ESP — there's no scenario where the binary silently degrades by refusing-and-doing-nothing while the safety net staleness grows. The only failure case is "even after pruning, the new set won't fit", which is the right time to refuse loudly.
 
-**Surfacing staleness.** The `status` command knows the desired set (from config + snapshot inventory) and the actual on-disk set. If they diverge, status reports e.g. `cloned: 4 expected, 3 present (1 missing; last attempt refused due to ESP full)`. The refusal reason is recorded in a small state file under `/var/lib/uki-btrfs-snapshots/` so it survives until the next successful run.
+**Surfacing staleness and orphans.** The `status` command knows the desired set (from config + snapshot inventory + installed kernels) and the actual on-disk set. If they diverge, status reports:
+
+- `cloned: 4 expected, 3 present (1 missing; last attempt refused due to ESP full)` — when reconciliation couldn't apply
+- `managed_uki: linux-cachyos missing (live UKI updated 2 days ago, regeneration failed)` — when a kernel-upgrade refresh got stuck
+- `removed_kernel: linux-cachyos has 4 recovery artefacts on disk; run prune to remove` — when `cleanup_removed_kernels=false` (default) and orphan recovery files exist
+
+The refusal reason and orphan state are recorded in a small state file under `/var/lib/uki-btrfs-snapshots/` so they survive until the next successful run.
 
 If the default is still too aggressive: setting `modes: [multi-profile]` alone drops to ~0 MB additional (in-place only); setting `clone.recent: 2` halves the clone cost; setting `modes: []` opts out entirely.
 
