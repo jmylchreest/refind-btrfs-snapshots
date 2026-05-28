@@ -1,0 +1,48 @@
+# uki-btrfs-snapshots: clone Unified Kernel Images per btrfs snapshot
+#
+# A UKI bundles kernel + initramfs + cmdline + os-release into a single signed
+# PE binary. The cmdline is inside the signed .cmdline PE section, so neither
+# refind nor bls can make UKI-only systems snapshot-bootable — they emit
+# external bootloader config the UKI ignores. This binary handles that gap by
+# emitting one cloned UKI per (snapshot × source UKI) with a rewritten
+# .cmdline pointing at the snapshot's subvolume.
+#
+# Spec: https://uapi-group.org/specifications/specs/unified_kernel_image/
+
+uki:
+  # Opt-in gate. Set to true to enable cloning; default false (the binary
+  # exits with a warning so you can install it, plan the config, then enable).
+  write_entries: false
+
+  # Where cloned UKIs are written, relative to the ESP root. /EFI/Linux is
+  # the UAPI-spec home for UKIs (what systemd-boot scans by default; what the
+  # firmware boot manager treats as known good locations).
+  output_dir: "/EFI/Linux"
+
+  # Prefix for managed clone filenames. Used both for naming
+  # (<prefix><snap-id>-<src-name>.efi) and to detect this binary's own
+  # previous output so we never re-clone our own clones.
+  entry_prefix: "uki-btrfs-snapshots-"
+
+# Snapshot discovery — identical to refind/bls.
+snapshot:
+  search_directories:
+    - /.snapshots
+  max_depth: 3
+  selection_count: 0
+  writable_method: toggle
+
+# ESP detection — identical to refind/bls.
+esp:
+  auto_detect: true
+  # uuid: ""
+  # mount_point: ""
+
+behavior:
+  exit_on_snapshot_boot: true
+  cleanup_old_snapshots: true
+
+kernel:
+  stale_snapshot_action: delete
+
+log_level: info
