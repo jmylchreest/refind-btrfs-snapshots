@@ -7,7 +7,6 @@ type Config struct {
 	ESP      ESPConfig      `koanf:"esp"`
 	Behavior BehaviorConfig `koanf:"behavior"`
 	Kernel   KernelConfig   `koanf:"kernel"`
-	UKI      UKIConfig      `koanf:"uki"`
 	BLS      BLSConfig      `koanf:"bls"`
 	Display  DisplayConfig  `koanf:"display"`
 	Advanced AdvancedConfig `koanf:"advanced"`
@@ -71,11 +70,6 @@ type BLSConfig struct {
 	WriteEntries Truthy `koanf:"write_entries"`
 	EntriesDir   string `koanf:"entries_dir"`
 	EntryPrefix  string `koanf:"entry_prefix"`
-}
-
-// UKIConfig.SnapshotStrategy: see docs/USAGE.md "UKI Snapshots: ESP-mode Caveat".
-type UKIConfig struct {
-	SnapshotStrategy string `koanf:"snapshot_strategy"`
 }
 
 type AdvancedConfig struct {
