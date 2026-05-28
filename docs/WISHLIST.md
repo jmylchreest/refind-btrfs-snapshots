@@ -89,23 +89,36 @@ This comfortably fits a 512 MB ESP with room for other content. The pre-flight c
 
 **Reconciliation, not append.** Every run computes the desired set from scratch — covering both clones AND managed snapshot UKIs — scans the ESP under the managed prefix, and reconciles:
 
-1. **Desired set** is computed from the live system:
-   - One managed snapshot UKI per currently-installed kernel (`uki-btrfs-snapshots-<kernel>.efi`)
-   - Clones for the eligible (non-stale, non-deleted) snapshots in the newest-N, named `uki-btrfs-snapshots-<snap-id>-<kernel>.efi` where `<kernel>` is the live kernel that owns that snapshot's boot set
+1. **Desired set** is computed by joining the live system inventory with the snapshot module inventory:
+   - **One managed snapshot UKI per kernel version that has any bootable snapshot.** A "kernel version" `<K>` qualifies for a managed UKI iff *either* the live system currently has kernel `<K>` installed *or* at least one retained snapshot has matching modules under `/lib/modules/<K>-*/`. This means a managed UKI persists as long as it's the boot path for at least one snapshot — even if the live system has since switched away from that kernel.
+   - **Clones** for the eligible (non-stale, non-deleted) snapshots in the newest-N, named `uki-btrfs-snapshots-<snap-id>-<kernel>.efi` where `<kernel>` is the version whose managed UKI hosts the matching profile.
 2. `to_delete = on_disk − desired` catches:
    - Clones that aged out of the newest-N window
    - Clones whose snapshot was pruned from btrfs (snapper rotation, manual delete)
-   - Clones whose snapshot became stale relative to the current kernel (the existing `stale_snapshot_action=delete` flow already excludes them from the eligible set, so reconciliation removes them)
-   - Managed snapshot UKIs for kernels that no longer exist on the live system (subject to the `uki.cleanup_removed_kernels` policy — see below)
+   - Clones whose snapshot became stale relative to the current kernel (the existing `stale_snapshot_action=delete` flow excludes them from the eligible set; reconciliation removes them)
+   - Managed snapshot UKIs for kernels that *no longer have any compatible snapshot* AND aren't installed on the live system anymore (true orphans — no data depends on them)
 3. `to_add = desired − on_disk` catches:
    - Clones for new snapshots
    - Managed snapshot UKIs for newly-installed kernels
-   - Managed snapshot UKIs whose underlying live UKI's mtime changed (kernel upgrade)
+   - Managed snapshot UKIs whose underlying live UKI's mtime changed (kernel upgrade) — refresh from the new live UKI
 4. **Deletions are applied first**, freeing their space.
 5. **Then the pre-flight ESP free-space check runs against the additions only.**
 6. Refuse only if, *even after pruning aged-out files*, the new additions won't fit. Error: `ESP has X MB free after pruning, need Y MB for new artefacts. Reduce uki.clone.recent or free non-managed ESP files.`
 
-**`uki.cleanup_removed_kernels`** (default `false`): when a kernel is uninstalled (e.g., user switches from `linux-cachyos` to `linux-zen`), the managed snapshot UKI and clones for the removed kernel become orphans. Default behaviour is to **keep** them — they're recovery artefacts and removing them silently on a kernel switch is potentially destructive. `status` reports `recovery for removed kernel <name> available; remove with 'uki-btrfs-snapshots prune --removed-kernels'`. Set this to `true` to opt into automatic cleanup (typically only on lab/test systems).
+**Retention is principled, not opinionated.** The rule "a managed UKI exists iff at least one bootable snapshot needs it" handles every interesting case naturally:
+
+| Situation | Result |
+|---|---|
+| Live kernel A installed + snapshots compatible with A | Keep managed UKI; refresh on `kernel-install` updates via `.path` trigger |
+| Live kernel A uninstalled, but snapshots from before the uninstall still have `/lib/modules/<A>/` | **Keep** — those snapshots are still bootable via this UKI, which is now the *only* copy of kernel A on the system |
+| Live kernel A uninstalled AND no remaining snapshot has compatible modules | Remove — no data depends on it anymore |
+| Live kernel A installed + brand-new system, no snapshots yet | Keep — kernel is installed |
+
+**Bound on proliferation.** Each managed UKI only contains profiles for snapshots whose modules match its embedded kernel — a snapshot doesn't appear in two managed UKIs. So total profile count across all managed UKIs ≤ total eligible snapshot count. The disk cost scales with *distinct kernel versions* seen across the snapshot window, not with snapshot count. A user keeping 30 days of daily snapshots through 1-2 kernel upgrades has 1-2 managed UKIs (~70-140 MB), not one per snapshot.
+
+**The historical kernel preservation property is a side-effect.** When kernel A is uninstalled from the live system, our managed UKI for A becomes the **only** remaining copy of that kernel binary on disk — it's preserved inside the `.linux` PE section. This makes the managed UKI the authoritative recovery path for any snapshot that needs that kernel, until the last such snapshot is pruned. That's the right behaviour: the artefact's lifetime is bound to the data that depends on it.
+
+If a user wants more aggressive cleanup (e.g., test systems where stale kernels shouldn't accumulate), `uki.retain_only_installed_kernels: true` reverts to "managed UKI exists iff its kernel is currently installed on the live system" — orphans get removed even when snapshots reference them. Default is `false` (the data-driven policy above).
 
 This means the clone set **always tracks the newest N**, even on a tight ESP — there's no scenario where the binary silently degrades by refusing-and-doing-nothing while the safety net staleness grows. The only failure case is "even after pruning, the new set won't fit", which is the right time to refuse loudly.
 
@@ -113,7 +126,7 @@ This means the clone set **always tracks the newest N**, even on a tight ESP —
 
 - `cloned: 4 expected, 3 present (1 missing; last attempt refused due to ESP full)` — when reconciliation couldn't apply
 - `managed_uki: linux-cachyos missing (live UKI updated 2 days ago, regeneration failed)` — when a kernel-upgrade refresh got stuck
-- `removed_kernel: linux-cachyos has 4 recovery artefacts on disk; run prune to remove` — when `cleanup_removed_kernels=false` (default) and orphan recovery files exist
+- `retained_kernel: linux-cachyos (uninstalled from live system) — 4 snapshots still depend on it` — when a managed UKI is kept under the data-driven retention rule
 
 The refusal reason and orphan state are recorded in a small state file under `/var/lib/uki-btrfs-snapshots/` so they survive until the next successful run.
 
