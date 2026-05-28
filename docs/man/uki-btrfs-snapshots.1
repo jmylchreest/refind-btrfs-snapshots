@@ -1,0 +1,46 @@
+.nh
+.TH uki-btrfs-snapshots 1
+.SH NAME
+uki-btrfs-snapshots \- Clone UKIs per btrfs snapshot with snapshot-rooted cmdlines
+
+.SH SYNOPSIS
+\fBuki-btrfs-snapshots\fP [\fIglobal options\fP] \fICOMMAND\fP [\fIargs\fP]
+
+.SH DESCRIPTION
+Discover btrfs snapshots and write one cloned UKI per (snapshot ×
+source UKI) under uki.output_dir, each carrying a .cmdline section that
+points at the snapshot's subvolume.
+
+.PP
+Use this only if your boot path is UKI-only (systemd-boot or direct
+EFI Boot Manager entries pointing at /EFI/Linux/*.efi). Systems
+booting via rEFInd or via BLS Type #1 entries don't need it — see
+refind-btrfs-snapshots or bls-btrfs-snapshots instead.
+
+.SH GLOBAL OPTIONS
+.EX
+  -c, --config string      Path to config file (default: /etc/uki-btrfs-snapshots.yaml)
+      --log-level string   Log verbosity: trace, debug, info, warn, error
+.EE
+
+.SH COMMANDS
+.SS uki-btrfs-snapshots generate
+Clone UKIs per btrfs snapshot under uki.output_dir
+
+.PP
+\fBUsage:\fP \fBuki-btrfs-snapshots generate [flags]\fR
+
+.PP
+\fBOptions:\fP
+
+.EX
+      --dry-run   Show what would be written without making changes
+      --force     Force generation even if booted from a snapshot
+  -y, --yes       Automatically approve all changes without prompting
+.EE
+
+.SS uki-btrfs-snapshots version
+Print version information
+
+.PP
+\fBUsage:\fP \fBuki-btrfs-snapshots version\fR
