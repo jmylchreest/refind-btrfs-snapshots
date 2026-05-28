@@ -78,11 +78,12 @@ uki:
 ```
 
 **Default footprint** for a single-kernel system with 25 selected snapshots:
-- Multi-profile: **0 MB additional** — operates in-place on the live UKI, only adds ~50 KB of `.profile` sections (kernel + initrd remain a single shared copy)
-- Clones: **4 × ~70 MB ≈ 280 MB** new files
-- **Total ≈ 280 MB additional disk, 5 `.efi` files on the ESP** (1 live multi-profile UKI + 4 cloned UKIs).
+- Live UKI (kernel-install owned): ~70 MB — **untouched by us**
+- Managed snapshot UKI (us): ~70 MB (clone of live UKI + 25 profile sections, ~50 KB metadata overhead)
+- Clones: **4 × ~70 MB ≈ 280 MB**
+- **Total ≈ 350 MB additional disk, 6 `.efi` files on the ESP** (1 live UKI + 1 managed snapshot UKI + 4 cloned UKIs).
 
-For two-kernel systems: still ~280 MB (multi-profile is in-place on both live UKIs; 4 clones map to whichever kernel each clone's snapshot was taken under — typically the current kernel for recent snapshots). 6 `.efi` files total.
+For two-kernel systems: ~420 MB additional (one managed snapshot UKI per kernel + 4 shared clones). 8 `.efi` files total.
 
 This comfortably fits a 512 MB ESP with room for other content. The pre-flight check makes "doesn't fit" a hard, actionable error rather than a silent overflow.
 
@@ -100,7 +101,7 @@ This means the clone set **always tracks the newest N**, even on a tight ESP —
 
 If the default is still too aggressive: setting `modes: [multi-profile]` alone drops to ~0 MB additional (in-place only); setting `clone.recent: 2` halves the clone cost; setting `modes: []` opts out entirely.
 
-The implementation note that makes mode 2 free: ukify's `--join-profile` lets us inject profile sections into the **existing** live UKI rather than write a parallel file. kernel-install will clobber those profile sections on every kernel upgrade, so the package ships a `90-uki-btrfs-snapshots.install` kernel-install hook that re-runs the join after each kernel update.
+The implementation note: mode 2's managed UKI is a separate file from the kernel-install-owned live UKI. We never modify the live UKI in place; this avoids the kernel-install clobber race entirely. On kernel upgrades, our `.path` unit (watching the live UKI's mtime in addition to `/.snapshots/`) regenerates the managed snapshot UKI from the new live UKI. No "repair" step is needed because we always rebuild from scratch.
 
 #### Profile display names
 
@@ -179,47 +180,64 @@ ukify build \
 
 ### Mode 2: Multi-profile UKI (opt-in)
 
-**Output:** one `<esp>/EFI/Linux/<src-name>.efi` containing:
+**Output:** a separate managed UKI per kernel at `<esp>/EFI/Linux/<prefix><kernel>.efi`, cloned from the live UKI and extended with one `.profile` section per eligible snapshot.
 
-- Base sections (`.linux`, `.initrd`, `.osrel`, `.uname`, `.sbat`) once
-- One `.profile` section per snapshot, each carrying its own `.cmdline` (a few hundred bytes vs. ~70 MB)
-- `.profile` metadata fields per [UAPI spec](https://uapi-group.org/specifications/specs/unified_kernel_image/):
-  - `ID=<snap-id>`
-  - `TITLE=<human-readable-snapshot-name>`
+**We do not modify the kernel-install-managed live UKI.** That file (`<esp>/EFI/Linux/<kernel>.efi`) is treated as read-only input; we only ever read from it to source the kernel/initrd/osrel/sbat sections. The managed snapshot UKI is a separate file owned entirely by this binary.
+
+**Profile ordering:**
+
+| Profile | Cmdline target | Why |
+|---|---|---|
+| `@0` (default) | **Most recent eligible snapshot** | Direct firmware boot of the snapshot UKI (`BootXXXX` entry) selects this — gives users a useful "panic-rollback" target without needing sd-stub's `@N` selector. The live UKI already handles "boot live root"; duplicating that as profile 0 would waste the slot. |
+| `@1`..`@N` | Each older eligible snapshot, newest-first | Selectable via sd-stub `@N` prefix from systemd-boot or hand-written refind entries. |
+
+Each profile carries its own `.cmdline` section plus `.profile` metadata per [UAPI spec](https://uapi-group.org/specifications/specs/unified_kernel_image/):
+- `ID=snap-<subvolid>` — used as the `@<ID>` selector
+- `TITLE=Linux-cachyos (2026-05-27T01:00:00Z)` — same title format the bls binary uses, honouring `advanced.naming.menu_format` + `display.local_time`
 
 The PE format defined by the UAPI spec: repeated `.profile` sections act as separators. Sections appearing before the first `.profile` are the base; sections between `.profile` markers belong to that profile. sd-stub measures only base + selected profile into PCR 12.
 
-**Build:** ukify natively supports this:
+**Build:**
 
 ```bash
-# 1. Build the base UKI as today (or take the system's existing UKI).
-# 2. For each snapshot, build a "mini-UKI" containing only its profile metadata
-#    and rewritten cmdline.
+# 1. For each profile (newest snapshot first), build a "mini-UKI" carrying
+#    only that profile's metadata and rewritten cmdline.
 ukify build \
-  --profile="ID=snap-N TITLE=Snapshot N (timestamp)" \
-  --cmdline="<rewritten>" \
-  --output=tmp/profile-N.efi
+  --profile="ID=snap-16403 TITLE=Linux-cachyos (2026-05-27T20:00Z)" \
+  --cmdline="<rewritten for snap 16403>" \
+  --output=tmp/profile-0.efi
+# … repeat for each snapshot, ordering = newest-first so profile @0 == newest
 
-# 3. Join the per-snapshot profiles into the base UKI in one shot.
+# 2. Build the managed snapshot UKI by joining all per-snapshot profiles onto
+#    a base assembled from the live UKI's sections (linux, initrd, osrel, uname,
+#    sbat extracted via objcopy).
 ukify build \
-  --linux=… --initrd=… --cmdline=<live cmdline> \
+  --linux=tmp/linux --initrd=tmp/initrd \
+  --os-release=@tmp/osrel --uname="$(tr -d '\0' < tmp/uname)" \
+  --sbat=@tmp/sbat \
+  --cmdline="<empty or trivial — profiles override>" \
+  --join-profile=tmp/profile-0.efi \
   --join-profile=tmp/profile-1.efi \
-  --join-profile=tmp/profile-2.efi \
   ... \
-  --output=<esp>/EFI/Linux/<src-name>.efi
+  --output=<esp>/EFI/Linux/<prefix><kernel>.efi
 ```
 
-**Selection at boot:** sd-stub strips a leading `@N ` from its invocation parameters and loads the matching profile. For systemd-boot, write BLS `.conf` entries with `options @1 ` etc. — the rest of the cmdline is supplied by the profile's own `.cmdline`.
+**Selection at boot:**
+
+- **Direct firmware boot:** if the firmware launches the managed snapshot UKI as a `BootXXXX` entry, profile `@0` (newest snapshot) is selected by default. Users wanting older snapshots without booting a different image use sd-stub or chainload via systemd-boot.
+- **systemd-boot:** auto-discovers the managed snapshot UKI; with native profile-menu synthesis (UAPI spec "may", depends on systemd-boot version) each profile becomes a menu entry. For deterministic menu population, write BLS `.conf` entries with `options @<ID> ` per profile (mirrors the bls binary's pattern).
+- **rEFInd:** treats the managed snapshot UKI as another EFI binary; per-profile selection needs hand-written `refind.conf` entries with `options "@<ID> "`.
 
 **Costs/constraints:**
 
 | Concern | Mitigation |
 |---|---|
-| Only useful if the boot path actually passes `@N` | Detect: if firmware-direct-boot is the active path, log a clear warning and recommend enabling `clone` alongside (modes is a list — they're additive). |
-| Replaces the original UKI in place — `kernel-install` may overwrite | Hook into `kernel-install` (provide a `90-uki-btrfs-snapshots.install` script) to re-join profiles after kernel upgrades. |
+| One extra UKI-sized file per kernel (~70 MB each) on the ESP | This is the cost of clean ownership separation from kernel-install. Accept and document. |
+| Snapshot UKI must stay in sync with live UKI's kernel/initrd after kernel updates | `.path` unit also watches mtime on `<esp>/EFI/Linux/<kernel>.efi`; when it changes (kernel-install ran), regenerate the snapshot UKI. No "repair" needed — just regenerate fresh. |
+| Only useful if the boot path actually passes `@N` (for profiles > 0) | Profile `@0 = newest snapshot` ensures direct firmware boot does something useful even without `@N` support. Log a notice if firmware-direct-boot is the active path, recommending also enabling `clone` for older snapshots. |
 | Requires ukify ≥ 256 for `--join-profile` | Detect at startup. |
-| Per-snapshot BLS entries with `options @N ` are still needed for systemd-boot's menu | Write them alongside, same as the bls binary's existing flow. |
-| Number of joined profiles bounded by `uki.multi_profile.recent` | Default unbounded — profiles are cheap (~KB), no realistic limit. Caps are only useful if a user wants the menu trimmed. |
+| Per-snapshot BLS entries with `options @<ID>` still useful for systemd-boot's menu | Optional; write them alongside if the user wants explicit menu entries beyond what systemd-boot may auto-synthesize. |
+| Number of joined profiles bounded by `uki.multi_profile.recent` | Default unbounded — profiles are cheap (~few KB each). |
 
 ### Secure Boot
 
@@ -247,7 +265,7 @@ ukify natively handles SB signing for **both** modes. We just plumb config keys 
 - **Mode selection:** explicit list config (`uki.modes: [clone, multi-profile]`) rather than auto-detect. Auto-detecting "your boot path uses direct firmware boot" is fragile (would need to walk EFI `BootXXXX`/`BootOrder` vars). Static config is simpler and lets users layer the two modes for belt-and-braces setups.
 - **`uki.clone.recent` default of 4:** chosen for ~280 MB headroom on a 512 MB ESP (the smaller-end size that still occurs in the wild). Yields 5 `.efi` files total on a single-kernel system (1 live multi-profile UKI + 4 clones). Worth surfacing actual snapshot+UKI sizes during dry-run so users see what they'd be committing to before raising the cap.
 - **Cleanup model:** mode 1 cleans by prefix-match (same as bls binary). Mode 2 has one UKI to rewrite; cleanup means stripping removed profiles — `ukify build` rebuild from scratch is simpler than surgical removal.
-- **kernel-install coexistence:** distro `kernel-install` plugins regenerate the primary UKI on kernel upgrades, which clobbers any joined profiles. We need a kernel-install hook in mode 2 (and to detect+re-emit clones in mode 1). The systemd `.path` unit watching `/.snapshots/` doesn't fire on kernel rebuilds; need a second trigger watching `/boot/EFI/Linux/`.
+- **kernel-install coexistence:** mode 2's separate managed snapshot UKI sidesteps the clobber problem entirely — kernel-install owns the live UKI; we own the snapshot UKI; the two never overlap. On kernel updates, `kernel-install` regenerates the live UKI as normal, and our `.path` unit (watching live-UKI mtime in addition to `/.snapshots/`) regenerates the snapshot UKI from the new kernel/initrd. Mode 1's clones also need refresh after kernel upgrades — same `.path` trigger handles both.
 - **Stub override:** ukify defaults to `/usr/lib/systemd/boot/efi/linuxx64.efi.stub`. Some users build UKIs with a custom stub (shim-aware variants). Detect the source UKI's stub and reuse it.
 - **Cross-arch:** stub is per-arch. amd64 binary already builds; aarch64 needs `linuxaa64.efi.stub`. Runtime picks the stub matching the running architecture.
 - **Naming:** managed prefix for mode 1 — `uki-btrfs-snapshots-` to keep clones clearly separable from user-managed UKIs.
