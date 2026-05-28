@@ -53,15 +53,30 @@ uki:
   modes: [clone, multi-profile]
 
   clone:
-    # Cap on how many snapshots get cloned. Each clone is a full ~70 MB .efi
-    # file (kernel + initrd duplicated; only .cmdline differs from the source
-    # UKI). Pick whichever boot-set's kernel each cloned snapshot was taken
-    # under — cloning is per (snapshot × associated kernel), NOT per snapshot
-    # × every kernel. The binary runs a mandatory pre-flight ESP free-space
-    # check and refuses to apply if the projected set wouldn't fit alongside
-    # what's already on the ESP.
+    # N most recent snapshots overall get cloned. Each clone is a full ~70 MB
+    # .efi file (kernel + initrd duplicated; only .cmdline differs from the
+    # source UKI). Cloning is per (snapshot × the kernel matching that snapshot's
+    # modules), NOT per snapshot × every kernel.
     # 0 = unlimited (inherits snapshot.selection_count — caller beware).
     recent: 4
+
+    # Minimum clones per kernel that still has retained snapshots, in addition
+    # to whatever `recent` covers. Without this, immediately after a kernel
+    # upgrade the "newest 4" all become current-kernel and you lose any direct-
+    # bootable recovery clone for older kernels (the managed UKI's profile @0
+    # still covers them, but only for systemd-boot / sd-stub-aware paths).
+    # Setting `per_kernel_minimum: 1` guarantees at least one direct-bootable
+    # recovery target per historical kernel — they retire naturally as the
+    # underlying snapshots age out.
+    # 0 = no per-kernel guarantee (current behaviour); recommend 1 for systems
+    # where direct firmware boot is the recovery path.
+    per_kernel_minimum: 0
+
+    # Optional hard cap on total clones across all kernels. Catches runaway
+    # interaction between `recent` × many distinct kernels × `per_kernel_minimum`.
+    # Excess is pruned newest-first within each kernel until the cap is met.
+    # 0 = unbounded.
+    maximum_total: 0
 
   multi_profile:
     # Cap on profiles joined to the base UKI. One base UKI per kernel; each
@@ -130,7 +145,18 @@ This means the clone set **always tracks the newest N**, even on a tight ESP —
 
 The refusal reason and orphan state are recorded in a small state file under `/var/lib/uki-btrfs-snapshots/` so they survive until the next successful run.
 
-If the default is still too aggressive: setting `modes: [multi-profile]` alone drops to ~0 MB additional (in-place only); setting `clone.recent: 2` halves the clone cost; setting `modes: []` opts out entirely.
+If the default is still too aggressive: setting `modes: [multi-profile]` drops the clone cost entirely; setting `clone.recent: 2` halves it; setting `modes: []` opts out.
+
+If the default is **insufficient** — specifically, you want direct-firmware-boot access to recovery targets across kernel upgrades, not just to the most recent 4 snapshots — set `clone.per_kernel_minimum: 1`. Worked example for the 3-upgrades-in-24-days scenario (hourly + daily snapshots, 24+24 retention):
+
+| Day | `per_kernel_minimum: 0` (default) | `per_kernel_minimum: 1` |
+|---|---|---|
+| 8 (after A→B) | 4 B-clones (~280 MB) | 4 B + 1 A = 5 (~350 MB) |
+| 16 (after B→C) | 4 C-clones | 4 C + 1 B + 1 A = 6 (~420 MB) |
+| 24 (after C→D) | 4 D-clones | 4 D + 1 C + 1 B + 1 A = 7 (~490 MB) |
+| 32 (A snaps pruned) | 4 D-clones | 4 D + 1 C + 1 B = 6 (~420 MB) — A naturally retires |
+
+`per_kernel_minimum: 1` adds ~70 MB per still-bootable historical kernel; they retire as the underlying snapshots age out of btrfs retention.
 
 The implementation note: mode 2's managed UKI is a separate file from the kernel-install-owned live UKI. We never modify the live UKI in place; this avoids the kernel-install clobber race entirely. On kernel upgrades, our `.path` unit (watching the live UKI's mtime in addition to `/.snapshots/`) regenerates the managed snapshot UKI from the new live UKI. No "repair" step is needed because we always rebuild from scratch.
 
