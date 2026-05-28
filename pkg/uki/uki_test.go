@@ -196,6 +196,188 @@ func TestWriteTo_RoundTripMultiProfileFixture(t *testing.T) {
 	assertSectionsEqual(t, img.Sections(), img2.Sections())
 }
 
+// --- SetSection / RemoveSection mutation -------------------------------------
+
+func TestSetSection_ReplacesExisting(t *testing.T) {
+	pe := buildPE(t, []peSection{
+		{name: ".linux", data: []byte("kernel")},
+		{name: ".cmdline", data: []byte("root=UUID=x rw")},
+	})
+	img, err := Parse(bytes.NewReader(pe))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	want := []byte("root=UUID=x rw rootflags=subvol=/snap-100,subvolid=100")
+	img.SetSection(".cmdline", want)
+
+	if got := img.Section(".cmdline"); got == nil || !bytes.Equal(got.Data, want) {
+		t.Fatalf("Section(.cmdline) = %v, want %q", got, want)
+	}
+
+	var buf bytes.Buffer
+	if _, err := img.WriteTo(&buf); err != nil {
+		t.Fatalf("WriteTo: %v", err)
+	}
+	rt, err := Parse(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("Parse re-emitted: %v", err)
+	}
+	if got := rt.Section(".cmdline"); got == nil || !bytes.Equal(got.Data, want) {
+		t.Errorf("round-trip .cmdline = %v, want %q", got, want)
+	}
+	if got := rt.Section(".linux"); got == nil || !bytes.Equal(got.Data, []byte("kernel")) {
+		t.Errorf("round-trip .linux altered: %v", got)
+	}
+}
+
+func TestSetSection_PreservesCharacteristicsAndVA(t *testing.T) {
+	// Replacing an existing section must keep its PE Characteristics and
+	// VirtualAddress — otherwise the firmware would see a section change
+	// flags or jump to a new RVA.
+	pe := buildPE(t, []peSection{
+		{name: ".linux", data: []byte("k")},
+		{name: ".cmdline", data: []byte("old")},
+	})
+	img, err := Parse(bytes.NewReader(pe))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	orig := img.Section(".cmdline")
+	origChar := orig.Characteristics
+	origVA := orig.VirtualAddress
+
+	img.SetSection(".cmdline", []byte("new content longer than old"))
+
+	got := img.Section(".cmdline")
+	if got.Characteristics != origChar {
+		t.Errorf("Characteristics: orig=%#x got=%#x", origChar, got.Characteristics)
+	}
+	if got.VirtualAddress != origVA {
+		t.Errorf("VirtualAddress: orig=%#x got=%#x", origVA, got.VirtualAddress)
+	}
+}
+
+func TestSetSection_AppendsWhenAbsent(t *testing.T) {
+	pe := buildPE(t, []peSection{
+		{name: ".linux", data: []byte("k")},
+	})
+	img, err := Parse(bytes.NewReader(pe))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	img.SetSection(".sbat", []byte("sbat,1,SBAT Version,sbat,1,https://x"))
+
+	if len(img.Sections()) != 2 {
+		t.Errorf("section count after append = %d, want 2", len(img.Sections()))
+	}
+	var buf bytes.Buffer
+	if _, err := img.WriteTo(&buf); err != nil {
+		t.Fatalf("WriteTo: %v", err)
+	}
+	rt, err := Parse(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("Parse re-emitted: %v", err)
+	}
+	if got := rt.Section(".sbat"); got == nil {
+		t.Fatal("appended .sbat missing after round-trip")
+	}
+}
+
+func TestRemoveSection_DropsAndReportsFound(t *testing.T) {
+	pe := buildPE(t, []peSection{
+		{name: ".linux", data: []byte("k")},
+		{name: ".cmdline", data: []byte("c")},
+		{name: ".osrel", data: []byte("ID=arch")},
+	})
+	img, err := Parse(bytes.NewReader(pe))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	if !img.RemoveSection(".cmdline") {
+		t.Error("RemoveSection(.cmdline) = false, want true")
+	}
+	if img.Section(".cmdline") != nil {
+		t.Error("Section(.cmdline) not nil after Remove")
+	}
+	if len(img.Sections()) != 2 {
+		t.Errorf("section count = %d, want 2", len(img.Sections()))
+	}
+
+	var buf bytes.Buffer
+	if _, err := img.WriteTo(&buf); err != nil {
+		t.Fatalf("WriteTo: %v", err)
+	}
+	rt, err := Parse(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("Parse re-emitted: %v", err)
+	}
+	if rt.Section(".cmdline") != nil {
+		t.Error(".cmdline survived round-trip after Remove")
+	}
+	if rt.Section(".linux") == nil || rt.Section(".osrel") == nil {
+		t.Error("other sections missing after round-trip")
+	}
+}
+
+func TestRemoveSection_ReturnsFalseForMissing(t *testing.T) {
+	pe := buildPE(t, []peSection{{name: ".linux", data: []byte("k")}})
+	img, err := Parse(bytes.NewReader(pe))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if img.RemoveSection(".nope") {
+		t.Error("RemoveSection(.nope) = true, want false")
+	}
+}
+
+func TestSetSection_RewriteRealFixtureCmdline(t *testing.T) {
+	// End-to-end UKI cloning shape: load a real ukify-built UKI, swap its
+	// .cmdline for a snapshot-rooted one, write, reparse, verify the
+	// rewritten cmdline reads back AND all other sections survive intact.
+	path := filepath.Join("..", "..", "internal", "kernel", "testdata", "uki-single-profile.efi")
+	img, err := ParseFile(path)
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+	origSections := img.Sections()
+
+	newCmdline := []byte("root=UUID=fixture-uuid rw rootflags=subvol=@/.snapshots/100/snapshot,subvolid=100")
+	img.SetSection(".cmdline", newCmdline)
+
+	var buf bytes.Buffer
+	if _, err := img.WriteTo(&buf); err != nil {
+		t.Fatalf("WriteTo: %v", err)
+	}
+
+	rt, err := Parse(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("Parse re-emitted: %v", err)
+	}
+
+	if got := rt.Section(".cmdline"); got == nil || !bytes.Equal(got.Data, newCmdline) {
+		t.Errorf("round-trip .cmdline = %v, want %q", got, newCmdline)
+	}
+
+	if len(rt.Sections()) != len(origSections) {
+		t.Fatalf("section count: orig=%d rt=%d", len(origSections), len(rt.Sections()))
+	}
+	for i, orig := range origSections {
+		got := rt.Sections()[i]
+		if orig.Name != got.Name {
+			t.Errorf("Section[%d] name: orig=%q rt=%q", i, orig.Name, got.Name)
+		}
+		if orig.Name == ".cmdline" {
+			continue // expected to differ
+		}
+		if !bytes.Equal(orig.Data, got.Data) {
+			t.Errorf("Section[%d] (%s) data altered by .cmdline rewrite", i, orig.Name)
+		}
+	}
+}
+
 func assertSectionsEqual(t *testing.T, want, got []Section) {
 	t.Helper()
 	if len(want) != len(got) {

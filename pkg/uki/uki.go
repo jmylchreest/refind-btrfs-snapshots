@@ -191,6 +191,34 @@ func (img *Image) Section(name string) *Section {
 	return nil
 }
 
+// SetSection replaces the first section matching name, or appends a new
+// section if none exists. Replacement preserves the existing section's
+// Characteristics and VirtualAddress so firmware-visible attributes don't
+// change. Newly appended sections default to Characteristics=0 and
+// VirtualAddress=0; if those need to be set, mutate the Section pointer
+// returned by Section(name) after the call.
+func (img *Image) SetSection(name string, data []byte) {
+	for i := range img.sections {
+		if img.sections[i].Name == name {
+			img.sections[i].Data = data
+			return
+		}
+	}
+	img.sections = append(img.sections, Section{Name: name, Data: data})
+}
+
+// RemoveSection drops the first section matching name. Returns true if a
+// section was removed, false if no match was found.
+func (img *Image) RemoveSection(name string) bool {
+	for i := range img.sections {
+		if img.sections[i].Name == name {
+			img.sections = append(img.sections[:i], img.sections[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
 // WriteTo emits the UKI as a valid PE32+ binary. The original DOS, PE
 // signature, COFF, and OptionalHeader bytes are preserved (so firmware-
 // relevant fields like entry point, image base, and stack/heap sizes are
