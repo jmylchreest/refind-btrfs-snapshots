@@ -123,6 +123,94 @@ func TestParseFile_RealFixture(t *testing.T) {
 	}
 }
 
+// --- WriteTo round-trip ------------------------------------------------------
+
+func TestWriteTo_RoundTripSynthesizedPE(t *testing.T) {
+	orig := buildPE(t, []peSection{
+		{name: ".linux", data: []byte("kernel-bytes")},
+		{name: ".cmdline", data: []byte("root=UUID=x rw")},
+		{name: ".uname", data: []byte("6.19.0")},
+	})
+
+	img, err := Parse(bytes.NewReader(orig))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	var buf bytes.Buffer
+	n, err := img.WriteTo(&buf)
+	if err != nil {
+		t.Fatalf("WriteTo: %v", err)
+	}
+	if n != int64(buf.Len()) {
+		t.Errorf("WriteTo returned %d, wrote %d", n, buf.Len())
+	}
+
+	img2, err := Parse(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("Parse re-emitted: %v", err)
+	}
+
+	assertSectionsEqual(t, img.Sections(), img2.Sections())
+}
+
+func TestWriteTo_RoundTripRealFixture(t *testing.T) {
+	path := filepath.Join("..", "..", "internal", "kernel", "testdata", "uki-single-profile.efi")
+	img, err := ParseFile(path)
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if _, err := img.WriteTo(&buf); err != nil {
+		t.Fatalf("WriteTo: %v", err)
+	}
+
+	img2, err := Parse(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("Parse re-emitted real fixture: %v", err)
+	}
+
+	assertSectionsEqual(t, img.Sections(), img2.Sections())
+}
+
+func TestWriteTo_RoundTripMultiProfileFixture(t *testing.T) {
+	// Multi-profile UKIs have repeated .cmdline / .profile sections.
+	// Section ordering and per-section bytes must all round-trip.
+	path := filepath.Join("..", "..", "internal", "kernel", "testdata", "uki-multi-profile.efi")
+	img, err := ParseFile(path)
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if _, err := img.WriteTo(&buf); err != nil {
+		t.Fatalf("WriteTo: %v", err)
+	}
+
+	img2, err := Parse(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("Parse re-emitted multi-profile fixture: %v", err)
+	}
+
+	assertSectionsEqual(t, img.Sections(), img2.Sections())
+}
+
+func assertSectionsEqual(t *testing.T, want, got []Section) {
+	t.Helper()
+	if len(want) != len(got) {
+		t.Fatalf("section count: want=%d got=%d", len(want), len(got))
+	}
+	for i := range want {
+		if want[i].Name != got[i].Name {
+			t.Errorf("Section[%d] name: want=%q got=%q", i, want[i].Name, got[i].Name)
+		}
+		if !bytes.Equal(want[i].Data, got[i].Data) {
+			t.Errorf("Section[%d] (%s) data differs: want %d bytes, got %d bytes", i, want[i].Name, len(want[i].Data), len(got[i].Data))
+		}
+	}
+}
+
 // --- Minimal PE32+ synthesizer -----------------------------------------------
 //
 // Just enough PE32+ to satisfy debug/pe.NewFile: DOS header, "PE\0\0", COFF
