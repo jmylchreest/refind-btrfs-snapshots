@@ -89,31 +89,6 @@ func TestInspectUKI_HandlesMissingOptionalSections(t *testing.T) {
 	}
 }
 
-func TestParseOSRelease(t *testing.T) {
-	in := `# top comment
-ID=arch
-NAME="Arch Linux"
-PRETTY_NAME='Arch Linux (stable)'
-VERSION_ID=rolling
-no-equals
-`
-	got := parseOSRelease(in)
-	want := map[string]string{
-		"ID":           "arch",
-		"NAME":         "Arch Linux",
-		"PRETTY_NAME":  "Arch Linux (stable)",
-		"VERSION_ID":   "rolling",
-	}
-	for k, v := range want {
-		if got[k] != v {
-			t.Errorf("parseOSRelease[%q] = %q, want %q", k, got[k], v)
-		}
-	}
-	if _, ok := got["no-equals"]; ok {
-		t.Errorf("malformed line should not appear in result")
-	}
-}
-
 // --- Minimal PE32+ synthesizer ------------------------------------------
 
 type peSection struct {
@@ -198,7 +173,7 @@ func buildPE(t *testing.T, sections []peSection) []byte {
 // `make uki-fixtures` (requires systemd-ukify locally; CI just uses the
 // committed binary).
 func TestInspectUKI_FixtureSingleProfile(t *testing.T) {
-	meta, err := InspectUKI("testdata/uki-single-profile.efi")
+	meta, err := InspectUKI("../../pkg/uki/testdata/uki-single-profile.efi")
 	if err != nil {
 		t.Fatalf("InspectUKI: %v", err)
 	}
@@ -227,7 +202,7 @@ func TestInspectUKI_FixtureSingleProfile(t *testing.T) {
 // `--cmdline` as profile @0 ID="main" — we test against that as-is because
 // it's what every realistic multi-profile UKI from ukify looks like.
 func TestInspectUKI_FixtureMultiProfile(t *testing.T) {
-	meta, err := InspectUKI("testdata/uki-multi-profile.efi")
+	meta, err := InspectUKI("../../pkg/uki/testdata/uki-multi-profile.efi")
 	if err != nil {
 		t.Fatalf("InspectUKI: %v", err)
 	}

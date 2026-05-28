@@ -245,7 +245,7 @@ func TestProfiles_NoBaseCmdline(t *testing.T) {
 // --- Real fixtures ----------------------------------------------------------
 
 func TestCmdline_RealSingleProfileFixture(t *testing.T) {
-	img, err := ParseFile(filepath.Join("..", "..", "internal", "kernel", "testdata", "uki-single-profile.efi"))
+	img, err := ParseFile(filepath.Join("testdata", "uki-single-profile.efi"))
 	if err != nil {
 		t.Fatalf("ParseFile: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestCmdline_RealSingleProfileFixture(t *testing.T) {
 }
 
 func TestProfiles_RealMultiProfileFixture(t *testing.T) {
-	img, err := ParseFile(filepath.Join("..", "..", "internal", "kernel", "testdata", "uki-multi-profile.efi"))
+	img, err := ParseFile(filepath.Join("testdata", "uki-multi-profile.efi"))
 	if err != nil {
 		t.Fatalf("ParseFile: %v", err)
 	}

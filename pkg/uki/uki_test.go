@@ -111,7 +111,7 @@ func TestParseFile_RealFixture(t *testing.T) {
 	// Integration check against a real ukify-built UKI. Lives under the
 	// kernel package's testdata for now; will move when inspect_uki is
 	// consolidated onto pkg/uki.
-	path := filepath.Join("..", "..", "internal", "kernel", "testdata", "uki-single-profile.efi")
+	path := filepath.Join("testdata", "uki-single-profile.efi")
 	img, err := ParseFile(path)
 	if err != nil {
 		t.Fatalf("ParseFile(%s): %v", path, err)
@@ -155,7 +155,7 @@ func TestWriteTo_RoundTripSynthesizedPE(t *testing.T) {
 }
 
 func TestWriteTo_RoundTripRealFixture(t *testing.T) {
-	path := filepath.Join("..", "..", "internal", "kernel", "testdata", "uki-single-profile.efi")
+	path := filepath.Join("testdata", "uki-single-profile.efi")
 	img, err := ParseFile(path)
 	if err != nil {
 		t.Fatalf("ParseFile: %v", err)
@@ -177,7 +177,7 @@ func TestWriteTo_RoundTripRealFixture(t *testing.T) {
 func TestWriteTo_RoundTripMultiProfileFixture(t *testing.T) {
 	// Multi-profile UKIs have repeated .cmdline / .profile sections.
 	// Section ordering and per-section bytes must all round-trip.
-	path := filepath.Join("..", "..", "internal", "kernel", "testdata", "uki-multi-profile.efi")
+	path := filepath.Join("testdata", "uki-multi-profile.efi")
 	img, err := ParseFile(path)
 	if err != nil {
 		t.Fatalf("ParseFile: %v", err)
@@ -337,7 +337,7 @@ func TestSetSection_RewriteRealFixtureCmdline(t *testing.T) {
 	// End-to-end UKI cloning shape: load a real ukify-built UKI, swap its
 	// .cmdline for a snapshot-rooted one, write, reparse, verify the
 	// rewritten cmdline reads back AND all other sections survive intact.
-	path := filepath.Join("..", "..", "internal", "kernel", "testdata", "uki-single-profile.efi")
+	path := filepath.Join("testdata", "uki-single-profile.efi")
 	img, err := ParseFile(path)
 	if err != nil {
 		t.Fatalf("ParseFile: %v", err)

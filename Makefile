@@ -72,7 +72,7 @@ docs: docs-clean
 docs-clean:
 	@rm -f $(MAN_DIR)/*.1
 
-## uki-fixtures: Regenerate committed UKI test fixtures under internal/kernel/testdata/
+## uki-fixtures: Regenerate committed UKI test fixtures under pkg/uki/testdata/
 ##
 ## Requires systemd-ukify locally. The underlying script skips with a clear
 ## message and exits 0 if ukify isn't on PATH, so this target is safe to
