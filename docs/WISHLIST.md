@@ -84,7 +84,19 @@ uki:
 
 For two-kernel systems: still ~280 MB (multi-profile is in-place on both live UKIs; 4 clones map to whichever kernel each clone's snapshot was taken under — typically the current kernel for recent snapshots). 6 `.efi` files total.
 
-This comfortably fits a 512 MB ESP with room for other content. The pre-flight check makes "doesn't fit" a hard, actionable error rather than a silent overflow — the binary refuses to apply with `ESP has X MB free, need Y MB. Reduce uki.clone.recent or free space.`
+This comfortably fits a 512 MB ESP with room for other content. The pre-flight check makes "doesn't fit" a hard, actionable error rather than a silent overflow.
+
+**Reconciliation, not append.** Every run computes the desired clone set from scratch (newest N snapshots), scans the ESP under the managed prefix, and reconciles:
+
+1. `to_delete = on_disk − desired` — old clones that aged out of the newest-N window, or clones whose source UKI's cmdline changed.
+2. `to_add = desired − on_disk` — clones for new snapshots not yet on disk.
+3. **Deletions are applied first**, freeing their space.
+4. **Then the pre-flight ESP free-space check runs against the additions only.**
+5. Refuse only if, *even after pruning aged-out clones*, the new additions won't fit. Error: `ESP has X MB free after pruning, need Y MB for new clones. Reduce uki.clone.recent or free non-managed ESP files.`
+
+This means the clone set **always tracks the newest N**, even on a tight ESP — there's no scenario where the binary silently degrades by refusing-and-doing-nothing while the safety net staleness grows. The only failure case is "even after pruning, the new set won't fit", which is the right time to refuse loudly.
+
+**Surfacing staleness.** The `status` command knows the desired set (from config + snapshot inventory) and the actual on-disk set. If they diverge, status reports e.g. `cloned: 4 expected, 3 present (1 missing; last attempt refused due to ESP full)`. The refusal reason is recorded in a small state file under `/var/lib/uki-btrfs-snapshots/` so it survives until the next successful run.
 
 If the default is still too aggressive: setting `modes: [multi-profile]` alone drops to ~0 MB additional (in-place only); setting `clone.recent: 2` halves the clone cost; setting `modes: []` opts out entirely.
 
@@ -230,7 +242,8 @@ ukify natively handles SB signing for **both** modes. We just plumb config keys 
 
 ### Open questions
 
-- **Both modes enabled by default**, gated only by package install (≈770 MB ESP footprint for the default single-kernel + 25-snapshot setup). Reasoning: this is the binary's *whole job*, and the user opted in by installing it; the bls binary's `write_entries: false` precedent isn't a fit here because the disk cost is large enough that silent overflow would be worse than an explicit pre-flight refusal. The pre-flight ESP free-space check is **mandatory**, not advisory — refuse to apply if projected size doesn't fit, with the exact numbers in the error message. Users wanting to tune down: set `modes: [clone]` or `modes: [multi-profile]` or `modes: []`.
+- **Both modes enabled by default**, gated only by package install (≈280 MB ESP footprint for the default single-kernel + 25-snapshot + `clone.recent: 4` setup). Reasoning: this is the binary's *whole job*, and the user opted in by installing it; the bls binary's `write_entries: false` precedent isn't a fit here. Users wanting to tune down: set `modes: [clone]`, `modes: [multi-profile]`, `clone.recent: 2`, or `modes: []` to opt out entirely.
+- **Pre-flight space check operates against additions only**, after pruning aged-out clones (`desired − on_disk` and `on_disk − desired` computed each run; deletions applied first). Refusal happens only if even the post-pruning projection won't fit. This prevents the rollback safety net from silently degrading over time when the ESP is tight.
 - **Mode selection:** explicit list config (`uki.modes: [clone, multi-profile]`) rather than auto-detect. Auto-detecting "your boot path uses direct firmware boot" is fragile (would need to walk EFI `BootXXXX`/`BootOrder` vars). Static config is simpler and lets users layer the two modes for belt-and-braces setups.
 - **`uki.clone.recent` default of 4:** chosen for ~280 MB headroom on a 512 MB ESP (the smaller-end size that still occurs in the wild). Yields 5 `.efi` files total on a single-kernel system (1 live multi-profile UKI + 4 clones). Worth surfacing actual snapshot+UKI sizes during dry-run so users see what they'd be committing to before raising the cap.
 - **Cleanup model:** mode 1 cleans by prefix-match (same as bls binary). Mode 2 has one UKI to rewrite; cleanup means stripping removed profiles — `ukify build` rebuild from scratch is simpler than surgical removal.
