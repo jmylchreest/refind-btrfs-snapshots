@@ -137,8 +137,23 @@ type InspectedMetadata struct {
 	CompressFormat string
 
 	// Cmdline is the embedded kernel command line. Only populated for UKIs
-	// (from the .cmdline PE section).
+	// (from the .cmdline PE section). For multi-profile UKIs this is the
+	// base cmdline that appears before the first .profile section, which
+	// individual profiles may override; see Profiles for the per-profile
+	// values.
 	Cmdline string
+
+	// IsMultiProfile reports whether the UKI contains one or more .profile
+	// sections — a single PE that exposes multiple bootable variants
+	// selectable at runtime via sd-stub's "@N" cmdline prefix. See
+	// https://uapi-group.org/specifications/specs/unified_kernel_image/.
+	IsMultiProfile bool
+
+	// Profiles enumerates the .profile sections found in a multi-profile
+	// UKI in section order. Empty for legacy single-profile UKIs. Each
+	// profile's Cmdline is the per-profile override if one was supplied,
+	// otherwise the base Cmdline above.
+	Profiles []UKIProfile
 
 	// OSReleaseID identifies the OS image baked into a UKI (e.g., "arch",
 	// "fedora"). Read from the ID= field of the .osrel PE section.
@@ -167,6 +182,29 @@ type InspectedMetadata struct {
 	// MicrocodeProcessorSignatures lists the CPU identifier of each block:
 	// processor_signature for Intel, processor_rev_id for AMD.
 	MicrocodeProcessorSignatures []uint32
+}
+
+// UKIProfile describes one profile inside a multi-profile UKI.
+// Spec: https://uapi-group.org/specifications/specs/unified_kernel_image/
+type UKIProfile struct {
+	// Index is the zero-based position of this profile in the PE file.
+	// Profile 0 is the implicit default — sd-stub selects it when no "@N"
+	// prefix is supplied in the cmdline, including under direct firmware
+	// boot (firmware has no profile selector).
+	Index int
+
+	// ID is the short identifier from the .profile section's ID= field.
+	// Used as the value passed via "@<ID>" to sd-stub.
+	ID string
+
+	// Title is the human-readable label from the .profile section's
+	// TITLE= field, suitable for boot menu display.
+	Title string
+
+	// Cmdline is the effective kernel command line for this profile:
+	// either a .cmdline section that appears between this and the next
+	// .profile marker (override), or the base .cmdline if no override.
+	Cmdline string
 }
 
 // BootImage is a discovered boot image file. Inspected is nil when binary

@@ -193,38 +193,68 @@ func buildPE(t *testing.T, sections []peSection) []byte {
 	return buf.Bytes()
 }
 
-// TestInspectUKI_RealFixture cross-checks the synthesizer against a real
-// ukify-built UKI. Set KERNEL_SPY_UKI to a UKI path (e.g. from
-// contrib/make-test-fixtures.sh) to enable; the test is skipped otherwise
-// so CI without ukify still passes.
-func TestInspectUKI_RealFixture(t *testing.T) {
-	path := os.Getenv("KERNEL_SPY_UKI")
-	if path == "" {
-		t.Skip("set KERNEL_SPY_UKI to a real ukify-built UKI to enable")
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Skipf("KERNEL_SPY_UKI=%q not readable: %v", path, err)
-	}
-	meta, err := InspectUKI(path)
+// TestInspectUKI_FixtureSingleProfile parses a committed real ukify-built UKI
+// to cross-check the synthesizer against actual ukify output. Regenerate via
+// `make uki-fixtures` (requires systemd-ukify locally; CI just uses the
+// committed binary).
+func TestInspectUKI_FixtureSingleProfile(t *testing.T) {
+	meta, err := InspectUKI("testdata/uki-single-profile.efi")
 	if err != nil {
-		t.Fatalf("InspectUKI on real UKI: %v", err)
+		t.Fatalf("InspectUKI: %v", err)
 	}
 	if meta.Format != "uki" {
 		t.Errorf("Format = %q, want uki", meta.Format)
 	}
-	// The fixture script always supplies these three, so they must be present
-	// to confirm we parse a real UKI the same way as the synthetic one.
-	if meta.Version == "" {
-		t.Errorf("Version empty — expected .uname from real UKI")
+	if meta.Version != "6.19.0-test" {
+		t.Errorf("Version = %q", meta.Version)
 	}
-	if meta.Cmdline == "" {
-		t.Errorf("Cmdline empty — expected .cmdline from real UKI")
+	if meta.Cmdline != "root=UUID=fixture-uuid rw quiet" {
+		t.Errorf("Cmdline = %q", meta.Cmdline)
 	}
-	if meta.OSReleasePrettyName == "" {
-		t.Errorf("OSReleasePrettyName empty — expected .osrel from real UKI")
+	if meta.OSReleaseID != "test" {
+		t.Errorf("OSReleaseID = %q", meta.OSReleaseID)
 	}
-	t.Logf("real UKI parsed: version=%q cmdline=%q os=%q",
-		meta.Version, meta.Cmdline, meta.OSReleasePrettyName)
+	if meta.IsMultiProfile {
+		t.Errorf("IsMultiProfile = true for single-profile fixture")
+	}
+	if len(meta.Profiles) != 0 {
+		t.Errorf("Profiles = %d, want 0", len(meta.Profiles))
+	}
+}
+
+// TestInspectUKI_FixtureMultiProfile parses a committed real ukify-built
+// multi-profile UKI. ukify's `--join-profile` convention wraps the base
+// `--cmdline` as profile @0 ID="main" — we test against that as-is because
+// it's what every realistic multi-profile UKI from ukify looks like.
+func TestInspectUKI_FixtureMultiProfile(t *testing.T) {
+	meta, err := InspectUKI("testdata/uki-multi-profile.efi")
+	if err != nil {
+		t.Fatalf("InspectUKI: %v", err)
+	}
+	if !meta.IsMultiProfile {
+		t.Fatal("IsMultiProfile = false, want true for multi-profile fixture")
+	}
+	if meta.Version != "6.19.0-test" {
+		t.Errorf("Version = %q", meta.Version)
+	}
+	if meta.Cmdline != "root=UUID=fixture-uuid rw" {
+		t.Errorf("base Cmdline = %q", meta.Cmdline)
+	}
+	if got, want := len(meta.Profiles), 3; got != want {
+		t.Fatalf("Profiles count = %d, want %d (ukify "+
+			"auto-emits a 'main' profile @0 for the base cmdline)", got, want)
+	}
+
+	for i, want := range []UKIProfile{
+		{Index: 0, ID: "main", Cmdline: "root=UUID=fixture-uuid rw"},
+		{Index: 1, ID: "snapshot-100", Title: "Snapshot 100", Cmdline: "root=UUID=fixture-uuid rw rootflags=subvol=/snap-100,subvolid=100"},
+		{Index: 2, ID: "snapshot-200", Title: "Snapshot 200", Cmdline: "root=UUID=fixture-uuid rw rootflags=subvol=/snap-200,subvolid=200"},
+	} {
+		got := meta.Profiles[i]
+		if got != want {
+			t.Errorf("Profiles[%d] = %+v\nwant %+v", i, got, want)
+		}
+	}
 }
 
 // Sanity check: the synthesizer produces something debug/pe.Open accepts.
@@ -247,5 +277,145 @@ func TestSynthesizedPEParses(t *testing.T) {
 	}
 	if meta.Version != "1.2.3" {
 		t.Errorf("Version = %q, want 1.2.3", meta.Version)
+	}
+}
+
+// --- Multi-profile UKI tests --------------------------------------------
+//
+// UAPI spec: repeated .profile sections separate the file into a base region
+// (sections before the first .profile) and per-profile regions (sections
+// between consecutive .profile markers). A profile's effective .cmdline is
+// the section between its .profile marker and the next .profile marker, or
+// the base .cmdline if no per-profile override is supplied.
+
+func TestInspectUKI_SingleProfileNotFlaggedMultiProfile(t *testing.T) {
+	// Sanity check: legacy single-profile UKIs must not report IsMultiProfile.
+	pe := buildPE(t, []peSection{
+		{name: ".linux", data: []byte("k")},
+		{name: ".cmdline", data: []byte("root=UUID=x rw\x00")},
+	})
+	meta, err := InspectUKI(writeTempFile(t, pe))
+	if err != nil {
+		t.Fatalf("InspectUKI: %v", err)
+	}
+	if meta.IsMultiProfile {
+		t.Errorf("IsMultiProfile = true, want false for single-profile UKI")
+	}
+	if len(meta.Profiles) != 0 {
+		t.Errorf("Profiles = %d entries, want 0", len(meta.Profiles))
+	}
+	if meta.Cmdline != "root=UUID=x rw" {
+		t.Errorf("Cmdline = %q", meta.Cmdline)
+	}
+}
+
+func TestInspectUKI_MultiProfile_BaseAndPerProfileCmdlines(t *testing.T) {
+	// Base .cmdline = live root; each profile supplies its own override.
+	pe := buildPE(t, []peSection{
+		{name: ".linux", data: []byte("k")},
+		{name: ".uname", data: []byte("6.19.0-arch\x00")},
+		{name: ".cmdline", data: []byte("root=UUID=x rw\x00")}, // base
+		{name: ".profile", data: []byte("ID=snap-100\nTITLE=Snapshot 100\n\x00")},
+		{name: ".cmdline", data: []byte("root=UUID=x rw rootflags=subvol=/snap-100\x00")},
+		{name: ".profile", data: []byte("ID=snap-200\nTITLE=Snapshot 200\n\x00")},
+		{name: ".cmdline", data: []byte("root=UUID=x rw rootflags=subvol=/snap-200\x00")},
+	})
+	meta, err := InspectUKI(writeTempFile(t, pe))
+	if err != nil {
+		t.Fatalf("InspectUKI: %v", err)
+	}
+
+	if !meta.IsMultiProfile {
+		t.Fatal("IsMultiProfile = false, want true")
+	}
+	if meta.Cmdline != "root=UUID=x rw" {
+		t.Errorf("base Cmdline = %q, want base/live cmdline", meta.Cmdline)
+	}
+	if got, want := len(meta.Profiles), 2; got != want {
+		t.Fatalf("Profiles count = %d, want %d", got, want)
+	}
+
+	for i, want := range []UKIProfile{
+		{Index: 0, ID: "snap-100", Title: "Snapshot 100", Cmdline: "root=UUID=x rw rootflags=subvol=/snap-100"},
+		{Index: 1, ID: "snap-200", Title: "Snapshot 200", Cmdline: "root=UUID=x rw rootflags=subvol=/snap-200"},
+	} {
+		got := meta.Profiles[i]
+		if got != want {
+			t.Errorf("Profiles[%d] = %+v\nwant %+v", i, got, want)
+		}
+	}
+}
+
+func TestInspectUKI_MultiProfile_ProfileInheritsBaseCmdline(t *testing.T) {
+	// Profile @1 has no .cmdline section of its own — must inherit the base.
+	pe := buildPE(t, []peSection{
+		{name: ".linux", data: []byte("k")},
+		{name: ".cmdline", data: []byte("root=UUID=x rw base-cmdline\x00")},
+		{name: ".profile", data: []byte("ID=a\nTITLE=A\n\x00")},
+		{name: ".cmdline", data: []byte("root=UUID=x rw override-A\x00")},
+		{name: ".profile", data: []byte("ID=b\nTITLE=B\n\x00")},
+		// no .cmdline for profile b → inherits base
+	})
+	meta, err := InspectUKI(writeTempFile(t, pe))
+	if err != nil {
+		t.Fatalf("InspectUKI: %v", err)
+	}
+	if len(meta.Profiles) != 2 {
+		t.Fatalf("Profiles count = %d", len(meta.Profiles))
+	}
+	if meta.Profiles[0].Cmdline != "root=UUID=x rw override-A" {
+		t.Errorf("Profiles[0].Cmdline = %q (expected override)", meta.Profiles[0].Cmdline)
+	}
+	if meta.Profiles[1].Cmdline != "root=UUID=x rw base-cmdline" {
+		t.Errorf("Profiles[1].Cmdline = %q (expected base inheritance)", meta.Profiles[1].Cmdline)
+	}
+}
+
+func TestInspectUKI_MultiProfile_NoBaseCmdline(t *testing.T) {
+	// No base .cmdline at all; only per-profile cmdlines.
+	pe := buildPE(t, []peSection{
+		{name: ".linux", data: []byte("k")},
+		{name: ".profile", data: []byte("ID=only\nTITLE=Only\n\x00")},
+		{name: ".cmdline", data: []byte("root=UUID=x rw only\x00")},
+	})
+	meta, err := InspectUKI(writeTempFile(t, pe))
+	if err != nil {
+		t.Fatalf("InspectUKI: %v", err)
+	}
+	if meta.Cmdline != "" {
+		t.Errorf("base Cmdline = %q, want empty (no base supplied)", meta.Cmdline)
+	}
+	if len(meta.Profiles) != 1 {
+		t.Fatalf("Profiles count = %d", len(meta.Profiles))
+	}
+	if meta.Profiles[0].Cmdline != "root=UUID=x rw only" {
+		t.Errorf("Profiles[0].Cmdline = %q", meta.Profiles[0].Cmdline)
+	}
+}
+
+func TestInspectUKI_MultiProfile_ProfileMetadataMissingFields(t *testing.T) {
+	// .profile content may be empty or missing fields; we should populate
+	// what's present and leave the rest empty rather than crash.
+	pe := buildPE(t, []peSection{
+		{name: ".linux", data: []byte("k")},
+		{name: ".profile", data: []byte("\x00")}, // empty content
+		{name: ".profile", data: []byte("ID=only-id\n\x00")},
+		{name: ".profile", data: []byte("TITLE=Only Title\n\x00")},
+	})
+	meta, err := InspectUKI(writeTempFile(t, pe))
+	if err != nil {
+		t.Fatalf("InspectUKI: %v", err)
+	}
+	if len(meta.Profiles) != 3 {
+		t.Fatalf("Profiles count = %d", len(meta.Profiles))
+	}
+	if meta.Profiles[0].ID != "" || meta.Profiles[0].Title != "" {
+		t.Errorf("Profiles[0] empty .profile yielded ID=%q Title=%q", meta.Profiles[0].ID, meta.Profiles[0].Title)
+	}
+	if meta.Profiles[1].ID != "only-id" || meta.Profiles[1].Title != "" {
+		t.Errorf("Profiles[1] ID-only = %+v", meta.Profiles[1])
+	}
+	if meta.Profiles[2].ID != "" || meta.Profiles[2].Title != "Only Title" {
+		t.Errorf("Profiles[2] Title-only = %+v", meta.Profiles[2])
 	}
 }
