@@ -5,11 +5,15 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/bootloader"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/cliconfig"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/config"
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/diff"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/discovery"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/kernel"
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/runner"
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/uki"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )
@@ -91,13 +95,50 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	outputDir := filepath.Join(espPath, cfg.UKI.OutputDir)
-	log.Info().
-		Int("source_ukis", len(ukiSets)).
-		Int("snapshots", len(snapshots)).
-		Int("clones_to_emit", len(ukiSets)*len(snapshots)).
-		Str("output_dir", outputDir).
-		Msg("UKI cloning not yet implemented — would emit clones to output_dir on next slice")
+	r := runner.New(cfg.DryRun.IsTrue())
+	gen := uki.NewGenerator()
+	out, err := gen.Generate(bootloader.Input{
+		Cfg:                cfg,
+		ESPPath:            espPath,
+		RootFS:             rootFS,
+		ProcessedSnapshots: snapshots,
+		SourceUKIs:         ukiSets,
+	})
+	if err != nil {
+		return fmt.Errorf("uki generator: %w", err)
+	}
+
+	if len(out.BinaryWrites) == 0 && len(out.Diffs) == 0 {
+		log.Info().Msg("No changes needed — UKI clones are up to date")
+		return nil
+	}
+
+	patch := diff.NewPatchDiff()
+	for _, d := range out.Diffs {
+		patch.AddFile(d)
+	}
+
+	if r.IsDryRun() {
+		diff.ShowPatchWithPager(patch, !cfg.AutoApprove.IsTrue())
+		log.Info().
+			Int("clones", len(out.BinaryWrites)).
+			Msg("[DRY RUN] Would apply all UKI changes shown above")
+		return nil
+	}
+
+	if !cfg.AutoApprove.IsTrue() {
+		if !diff.ConfirmPatchChanges(patch, false) {
+			log.Info().Msg("User declined changes — operation cancelled")
+			return nil
+		}
+	} else {
+		diff.ShowPatchWithPager(patch, false)
+	}
+
+	if err := uki.Apply(out, r); err != nil {
+		return fmt.Errorf("apply UKI clones: %w", err)
+	}
+	log.Info().Int("clones", len(out.BinaryWrites)).Msg("UKI clones written")
 	return nil
 }
 
