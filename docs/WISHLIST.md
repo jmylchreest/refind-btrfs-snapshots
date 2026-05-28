@@ -7,6 +7,8 @@ Planned features and capabilities that aren't built yet. Items here are **not co
 - [`uki-btrfs-snapshots` binary](#uki-btrfs-snapshots-binary)
   - [The fundamental problem](#the-fundamental-problem)
   - [Two implementation modes](#two-implementation-modes)
+    - [Config shape](#config-shape)
+    - [Profile display names](#profile-display-names)
   - [Bootloader / firmware support matrix](#bootloader--firmware-support-matrix)
   - [Mode 1: Cloned UKIs per snapshot (default)](#mode-1-cloned-ukis-per-snapshot-default)
   - [Mode 2: Multi-profile UKI (opt-in)](#mode-2-multi-profile-uki-opt-in)
@@ -27,14 +29,62 @@ A snapshot-bootable cmdline is `rootflags=subvol=<snap-path>,subvolid=<snap-id>`
 
 ### Two implementation modes
 
-The community has two working answers; this binary should support both as alternatives selectable via config. They differ in storage cost and in which boot paths can consume them:
+The community has two working answers; this binary supports both, **independently selectable as a list** so users can run either or both at once. They differ in storage cost and in which boot paths can consume them:
 
 | Mode | Per-snapshot disk cost | Works under SB | Boot paths that can select per snapshot |
 |---|---|---|---|
 | **1. Cloned UKIs** (one .efi per snapshot) | ~70 MB each (kernel + initrd duplicated) | Yes (re-sign each clone) | Anything that can launch a `.efi` from the ESP — direct firmware boot, refind, systemd-boot, GRUB chainload, limine. **Universal.** |
 | **2. Multi-profile UKI** (single .efi with N `.profile` sections) | ~few KB each (only `.cmdline` per profile; kernel/initrd shared) | Yes (single signed image) | Only paths that pass an `@N` profile prefix to the sd-stub. **Currently: systemd-boot with sd-stub; manually-crafted refind entries.** |
 
-Mode 1 is the **default** because it works for every boot path that exists today, including direct-firmware-boot — UEFI firmware has no concept of profiles and cannot pass an `@N` selector, so a multi-profile UKI registered as a `BootXXXX` entry will always boot profile @0. Mode 2 is the more *architecturally* attractive answer and what we'd recommend if/when bootloader support catches up.
+The two are not mutually exclusive. Plausible combinations:
+
+- **`clone` only** — universal compatibility, accept disk cost. Most conservative default.
+- **`multi-profile` only** — systemd-boot users on tight ESPs; cheapest per-snapshot.
+- **Both** — multi-profile for the systemd-boot menu (cheap, many profiles), plus a small number of clones as a universal recovery fallback (e.g., last 3 known-good).
+
+#### Config shape
+
+```yaml
+uki:
+  # Which mode(s) to apply. Both are independent; you can enable either or both.
+  modes: [clone]                      # default; alternatives: [multi-profile], [clone, multi-profile]
+
+  clone:
+    # Cap on how many snapshots get cloned. Cloning is expensive (~70 MB each)
+    # so this defaults conservatively; ESPs are typically 512 MB - 1 GB. The
+    # binary refuses to apply if the resulting set wouldn't fit alongside what's
+    # already on the ESP.
+    # 0 = inherit snapshot.selection_count (caller beware).
+    recent: 10
+
+  multi_profile:
+    # Cap on how many profiles join the base UKI. Profiles cost a few KB each
+    # so this can run unlimited safely in normal cases.
+    # 0 = inherit snapshot.selection_count.
+    recent: 0
+
+  # Signing: see Secure Boot section.
+  signing:
+    key_path: ""
+    cert_path: ""
+```
+
+#### Profile display names
+
+Each `.profile` section in a multi-profile UKI carries metadata fields from the [UAPI spec](https://uapi-group.org/specifications/specs/unified_kernel_image/):
+
+| Field | Purpose |
+|---|---|
+| `ID=` | Brief 7-bit ASCII identifier — used as the value passed via `@<ID>` (or `@<index>`) to sd-stub at boot |
+| `TITLE=` | Human-readable text for boot menu display |
+
+So each snapshot's profile can carry its own title — we'd set `TITLE=Linux-cachyos (2026-05-27T16:00:00Z)` (same format as the bls binary's entry titles, honouring `advanced.naming.menu_format` + `display.local_time`). Where that title actually surfaces depends on the consumer:
+
+- **systemd-boot** with native profile-menu synthesis: TITLE shows as a top-level menu entry. (Per the UAPI spec this is "may", not "does" — depends on systemd-boot version.)
+- **systemd-boot** with hand-written BLS `.conf` per profile: the `.conf`'s own `title` line wins; the profile's TITLE is just metadata stored in the UKI.
+- **refind** with manual `refind.conf` per profile: same — refind's menu name comes from its own config.
+
+For mode 1 (clones), each clone is just a normal UKI; its "title" in a boot menu is whatever the surrounding BLS `.conf` or `refind.conf` entry declares.
 
 ### Bootloader / firmware support matrix
 
@@ -89,9 +139,10 @@ ukify build \
 
 | Concern | Mitigation |
 |---|---|
-| Each clone is ~70 MB. 25 snapshots × ~70 MB ≈ 1.75 GB on the ESP. | `snapshot.selection_count` becomes load-bearing. Detect ESP free space before applying. |
+| Each clone is ~70 MB. 25 snapshots × ~70 MB ≈ 1.75 GB on the ESP. | `uki.clone.recent` caps the count separately from `snapshot.selection_count`; default is 10 (≈700 MB). Pre-flight check: compute the required size and refuse if the ESP doesn't have headroom. |
 | Runtime dep on `ukify` (systemd ≥ v253) | Detect at startup; error early with package hint. |
 | Build cost ~2-3 s per UKI | Show per-snapshot progress logs. |
+| Choosing which N to clone when `recent` < total snapshots | Newest-first by `SnapshotTime`. Same ordering the bls binary uses. |
 
 ### Mode 2: Multi-profile UKI (opt-in)
 
@@ -131,10 +182,11 @@ ukify build \
 
 | Concern | Mitigation |
 |---|---|
-| Only useful if the boot path actually passes `@N` | Detect: if firmware-direct-boot is the active path, refuse cleanly with a message saying "your boot path doesn't support multi-profile UKIs; switch to mode 1 (clone)". |
+| Only useful if the boot path actually passes `@N` | Detect: if firmware-direct-boot is the active path, log a clear warning and recommend enabling `clone` alongside (modes is a list — they're additive). |
 | Replaces the original UKI in place — `kernel-install` may overwrite | Hook into `kernel-install` (provide a `90-uki-btrfs-snapshots.install` script) to re-join profiles after kernel upgrades. |
 | Requires ukify ≥ 256 for `--join-profile` | Detect at startup. |
 | Per-snapshot BLS entries with `options @N ` are still needed for systemd-boot's menu | Write them alongside, same as the bls binary's existing flow. |
+| Number of joined profiles bounded by `uki.multi_profile.recent` | Default unbounded — profiles are cheap (~KB), no realistic limit. Caps are only useful if a user wants the menu trimmed. |
 
 ### Secure Boot
 
@@ -157,7 +209,8 @@ ukify natively handles SB signing for **both** modes. We just plumb config keys 
 
 ### Open questions
 
-- **Mode selection:** static config (`uki.mode: clone | multi-profile`) or auto-detect from the boot path? Auto-detect is tempting but reading the active `BootXXXX` and inferring "this UKI was launched directly by firmware" is fragile. Prefer explicit config with a sensible default (`clone`).
+- **Mode selection:** explicit list config (`uki.modes: [clone, multi-profile]`) rather than auto-detect. Auto-detecting "your boot path uses direct firmware boot" is fragile (would need to walk EFI `BootXXXX`/`BootOrder` vars). Static config is simpler and lets users layer the two modes for belt-and-braces setups.
+- **`uki.clone.recent` default of 10:** chosen for ~700 MB headroom on a typical 1 GB ESP. Worth surfacing actual snapshot+UKI sizes during dry-run so users see what they'd be committing to.
 - **Cleanup model:** mode 1 cleans by prefix-match (same as bls binary). Mode 2 has one UKI to rewrite; cleanup means stripping removed profiles — `ukify build` rebuild from scratch is simpler than surgical removal.
 - **kernel-install coexistence:** distro `kernel-install` plugins regenerate the primary UKI on kernel upgrades, which clobbers any joined profiles. We need a kernel-install hook in mode 2 (and to detect+re-emit clones in mode 1). The systemd `.path` unit watching `/.snapshots/` doesn't fire on kernel rebuilds; need a second trigger watching `/boot/EFI/Linux/`.
 - **Stub override:** ukify defaults to `/usr/lib/systemd/boot/efi/linuxx64.efi.stub`. Some users build UKIs with a custom stub (shim-aware variants). Detect the source UKI's stub and reuse it.
