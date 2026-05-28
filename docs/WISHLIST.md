@@ -58,19 +58,17 @@ uki:
     # .cmdline differs). Cloning is per (snapshot × the kernel matching that
     # snapshot's modules), NOT per snapshot × every kernel.
     # 0 = unlimited (inherits snapshot.selection_count — caller beware).
-    recent: 4
+    recent: 3
 
     # Minimum clones per kernel that still has retained snapshots, in addition
-    # to whatever `recent` covers. Without this, immediately after a kernel
-    # upgrade the "newest 4" all become current-kernel and you lose any direct-
-    # bootable recovery clone for older kernels (the managed UKI's profile @0
-    # still covers them, but only for systemd-boot / sd-stub-aware paths).
-    # Setting `per_kernel_minimum: 1` guarantees at least one direct-bootable
-    # recovery target per historical kernel — they retire naturally as the
-    # underlying snapshots age out.
-    # 0 = no per-kernel guarantee (current behaviour); recommend 1 for systems
-    # where direct firmware boot is the recovery path.
-    per_kernel_minimum: 0
+    # to whatever `recent` covers. Default 1 guarantees at least one direct-
+    # bootable recovery target per historical kernel — without this, right after
+    # a kernel upgrade the "newest N" all become current-kernel and direct-
+    # firmware-boot loses access to older-kernel snapshots (multi-profile mode's
+    # @0 still covers them, but only via sd-stub-aware boot paths).
+    # Retires naturally as the underlying snapshots age out of btrfs retention.
+    # 0 = no per-kernel guarantee (only recency-driven clones).
+    per_kernel_minimum: 1
 
     # Optional hard cap on total clones across all kernels. Catches runaway
     # interaction between `recent` × many distinct kernels × `per_kernel_minimum`.
@@ -93,13 +91,13 @@ uki:
     cert_path: ""
 ```
 
-**Default footprint** for a single-kernel system with `clone.recent: 4`:
+**Default footprint** for a single-kernel system with the default `clone.recent: 3` and `clone.per_kernel_minimum: 1`:
 - Live UKI (kernel-install owned, untouched by us): **1 UKI on disk**
 - Managed snapshot UKI (us, contains all snapshot profiles): **1 UKI on disk**
-- Clones: **4 UKIs on disk**
-- **Total: 6 `.efi` files** (1 live + 1 managed snapshot + 4 clones).
+- Clones: **3 UKIs on disk** (per_kernel_minimum satisfied by the 3 recent clones since only 1 kernel)
+- **Total: 5 `.efi` files** (1 live + 1 managed + 3 clones).
 
-For a two-kernel system: one managed snapshot UKI per kernel + 4 shared clones = **8 `.efi` files** total.
+For multi-kernel systems, per_kernel_minimum adds one extra clone per historical kernel with retained snapshots — see the worked walk-through below.
 
 Each UKI is full-size (kernel + initrd embedded). Actual byte cost varies entirely with the distro's kernel and initramfs size and compression settings — measure on the target system before tuning the caps. The pre-flight check makes "doesn't fit" a hard, actionable error rather than a silent overflow.
 
@@ -146,18 +144,23 @@ This means the clone set **always tracks the newest N**, even on a tight ESP —
 
 The refusal reason and orphan state are recorded in a small state file under `/var/lib/uki-btrfs-snapshots/` so they survive until the next successful run.
 
-If the default is still too aggressive: setting `modes: [multi-profile]` drops the clone cost entirely; setting `clone.recent: 2` halves it; setting `modes: []` opts out.
+**Worked walk-through** — 3 kernel upgrades over 24 days, hourly + daily snapshots (24+24 retention). "Steady state" means a few days after the kernel change so the new kernel has accumulated >3 snapshots.
 
-If the default is **insufficient** — specifically, you want direct-firmware-boot access to recovery targets across kernel upgrades, not just to the most recent 4 snapshots — set `clone.per_kernel_minimum: 1`. Worked example for the 3-upgrades-in-24-days scenario (hourly + daily snapshots, 24+24 retention):
+| Phase | Managed UKIs | Clones (recent=3) | + per_kernel_min=1 adds | Total clones | Total `.efi` (managed + clones) |
+|---|---|---|---|---|---|
+| Day 7 (steady on A) | A | 3 A | — (A already covered) | 3 | **4** |
+| Day 12 (steady after A→B) | A, B | 3 B | 1 A | 4 | **6** |
+| Day 20 (steady after B→C) | A, B, C | 3 C | 1 B + 1 A | 5 | **8** |
+| Day 28 (steady after C→D) | A, B, C, D | 3 D | 1 C + 1 B + 1 A | 6 | **10** |
+| Day 32 (A snapshots pruned from btrfs) | B, C, D | 3 D | 1 C + 1 B | 5 | **8** |
 
-| Day | `per_kernel_minimum: 0` (default) | `per_kernel_minimum: 1` |
-|---|---|---|
-| 8 (after A→B) | 4 B-clones | 4 B + 1 A = 5 clones |
-| 16 (after B→C) | 4 C-clones | 4 C + 1 B + 1 A = 6 clones |
-| 24 (after C→D) | 4 D-clones | 4 D + 1 C + 1 B + 1 A = 7 clones |
-| 32 (A snaps pruned) | 4 D-clones | 4 D + 1 C + 1 B = 6 clones — A naturally retires |
+(Plus the kernel-install-owned live UKI, untouched — add 1 to each row for total ESP UKI count.)
 
-`per_kernel_minimum: 1` adds one full UKI's worth of disk per still-bootable historical kernel; they retire as the underlying snapshots age out of btrfs retention.
+Clone count grows with kernel diversity in the snapshot window, not with snapshot count. Historical-kernel clones retire automatically when the last compatible snapshot ages out of btrfs retention.
+
+If the footprint is too aggressive: `modes: [multi-profile]` drops all clones; `clone.recent: 2` reduces the recency window; `clone.per_kernel_minimum: 0` removes the per-kernel safety net (reverts to recency-only). If still too much, set `modes: []` to opt out.
+
+If you want a hard upper bound regardless of how many kernels are in play, set `clone.maximum_total: N`.
 
 The implementation note: mode 2's managed UKI is a separate file from the kernel-install-owned live UKI. We never modify the live UKI in place; this avoids the kernel-install clobber race entirely. On kernel upgrades, our `.path` unit (watching the live UKI's mtime in addition to `/.snapshots/`) regenerates the managed snapshot UKI from the new live UKI. No "repair" step is needed because we always rebuild from scratch.
 
@@ -321,7 +324,7 @@ ukify natively handles SB signing for **both** modes. We just plumb config keys 
 - **Both modes enabled by default**, gated only by package install. Reasoning: this is the binary's *whole job*, and the user opted in by installing it; the bls binary's `write_entries: false` precedent isn't a fit here. The mandatory pre-flight ESP free-space check (which sizes from the actual UKI on disk, not from any baked-in assumption) is the safety net against tight ESPs. Users wanting to tune down: set `modes: [clone]`, `modes: [multi-profile]`, `clone.recent: 2`, or `modes: []` to opt out entirely.
 - **Pre-flight space check operates against additions only**, after pruning aged-out clones (`desired − on_disk` and `on_disk − desired` computed each run; deletions applied first). Refusal happens only if even the post-pruning projection won't fit. This prevents the rollback safety net from silently degrading over time when the ESP is tight.
 - **Mode selection:** explicit list config (`uki.modes: [clone, multi-profile]`) rather than auto-detect. Auto-detecting "your boot path uses direct firmware boot" is fragile (would need to walk EFI `BootXXXX`/`BootOrder` vars). Static config is simpler and lets users layer the two modes for belt-and-braces setups.
-- **`uki.clone.recent` default of 4:** chosen conservatively because the actual byte cost depends on the host's UKI size, which we can't predict. Four clones is a reasonable compromise between "useful recovery set" and "doesn't blindly fill the ESP on hosts with large UKIs". Dry-run output should show the real numbers (actual UKI size × proposed clone count) so users see what they'd commit to before raising the cap.
+- **`uki.clone.recent` default of 3, `per_kernel_minimum` default of 1:** chosen so the default is opinionated-but-modest. Three recent clones for the current kernel cover "the very recent past went sideways" rollback; one-per-historical-kernel-with-snapshots covers "I want a direct-firmware-bootable recovery target for every still-bootable kernel". Total clone count = recent + (distinct historical kernels with snapshots) — stays bounded by kernel diversity in the snapshot window, not snapshot count. Dry-run output should show real numbers (actual UKI size × projected clone count) so users see what they'd commit to before raising the cap.
 - **Cleanup model:** mode 1 cleans by prefix-match (same as bls binary). Mode 2 has one UKI to rewrite; cleanup means stripping removed profiles — `ukify build` rebuild from scratch is simpler than surgical removal.
 - **kernel-install coexistence:** mode 2's separate managed snapshot UKI sidesteps the clobber problem entirely — kernel-install owns the live UKI; we own the snapshot UKI; the two never overlap. On kernel updates, `kernel-install` regenerates the live UKI as normal, and our `.path` unit (watching live-UKI mtime in addition to `/.snapshots/`) regenerates the snapshot UKI from the new kernel/initrd. Mode 1's clones also need refresh after kernel upgrades — same `.path` trigger handles both.
 - **Stub override:** ukify defaults to `/usr/lib/systemd/boot/efi/linuxx64.efi.stub`. Some users build UKIs with a custom stub (shim-aware variants). Detect the source UKI's stub and reuse it.
