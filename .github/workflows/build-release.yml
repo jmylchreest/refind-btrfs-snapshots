@@ -124,9 +124,9 @@ jobs:
       matrix:
         goarch: [amd64, arm64]
         binary:
-          - { name: refind-btrfs-snapshots, path: ./cmd/refind-btrfs-snapshots, config: configs/refind-btrfs-snapshots.yaml, systemd: true }
-          - { name: bls-btrfs-snapshots,    path: ./cmd/bls-btrfs-snapshots,    config: configs/bls-btrfs-snapshots.yaml,    systemd: true }
-          - { name: kernel-spy,             path: ./cmd/kernel-spy,             config: "",                                  systemd: false }
+          - { name: refind-btrfs-snapshots, path: ./cmd/refind-btrfs-snapshots, config: configs/refind-btrfs-snapshots.yaml, systemd: true,  man: true  }
+          - { name: bls-btrfs-snapshots,    path: ./cmd/bls-btrfs-snapshots,    config: configs/bls-btrfs-snapshots.yaml,    systemd: true,  man: true  }
+          - { name: kernel-spy,             path: ./cmd/kernel-spy,             config: "",                                  systemd: false, man: false }
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -178,6 +178,10 @@ jobs:
           if [[ "${{ matrix.binary.systemd }}" == "true" ]]; then
             mkdir -p "$STAGE/systemd"
             cp systemd/${BIN}.* "$STAGE/systemd/"
+          fi
+          if [[ "${{ matrix.binary.man }}" == "true" ]]; then
+            mkdir -p "$STAGE/man"
+            cp docs/man/${BIN}*.1 "$STAGE/man/"
           fi
 
           tar czf "dist/assets/${BIN}_${VER}_linux_${ARCH}.tar.gz" -C "$STAGE" .
