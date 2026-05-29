@@ -80,6 +80,11 @@ type UKIConfig struct {
 	WriteEntries Truthy `koanf:"write_entries"`
 	OutputDir    string `koanf:"output_dir"`
 	EntryPrefix  string `koanf:"entry_prefix"`
+
+	// SignCommand, when non-empty, is exec'd per cloned UKI after writing.
+	// The literal "{}" in any argv element is substituted with the clone's
+	// absolute path before exec. Empty / nil → clones are written unsigned.
+	SignCommand ShellArgv `koanf:"sign_command"`
 }
 
 type AdvancedConfig struct {

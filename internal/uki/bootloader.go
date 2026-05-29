@@ -164,11 +164,11 @@ func fileSize(path string) int64 {
 	return info.Size()
 }
 
-// Apply writes every BinaryWrite via the runner and removes orphan
-// FileDiffs (IsNew=false, Modified=""). It exists because the byte
-// payloads can't go through diff.Apply — the text-diff pipeline would
-// mangle the binary on display and is only safe for descriptor diffs.
-func Apply(out *bootloader.Output, r runner.Runner) error {
+// Apply writes BinaryWrites, removes orphan FileDiffs (IsNew=false,
+// Modified=""), and if signCommand is non-empty, execs it per clone with
+// "{}" substituted to the clone's path. Lives outside diff.Apply because
+// the binary payloads can't survive the text-diff pipeline.
+func Apply(out *bootloader.Output, r runner.Runner, signCommand []string) error {
 	if out == nil {
 		return nil
 	}
@@ -182,6 +182,11 @@ func Apply(out *bootloader.Output, r runner.Runner) error {
 		if err := r.WriteFile(bw.Path, bw.Content, 0o644, bw.Description); err != nil {
 			errs = append(errs, fmt.Errorf("write %s: %w", bw.Path, err))
 			continue
+		}
+		if cmd := substituteTemplate(signCommand, bw.Path); len(cmd) > 0 {
+			if err := r.Command(cmd[0], cmd[1:], fmt.Sprintf("Sign %s", bw.Path)); err != nil {
+				errs = append(errs, fmt.Errorf("sign %s: %w", bw.Path, err))
+			}
 		}
 	}
 
@@ -204,4 +209,21 @@ func Apply(out *bootloader.Output, r runner.Runner) error {
 		return fmt.Errorf("UKI apply: %d failures: %w", len(errs), errors.Join(errs...))
 	}
 	return nil
+}
+
+// substituteTemplate replaces argv elements equal to "{}" with clonePath.
+// Exact-token match only — "{}.sig" and "out={}" pass through unchanged.
+func substituteTemplate(tmpl []string, clonePath string) []string {
+	if len(tmpl) == 0 {
+		return nil
+	}
+	out := make([]string, len(tmpl))
+	for i, tok := range tmpl {
+		if tok == "{}" {
+			out[i] = clonePath
+		} else {
+			out[i] = tok
+		}
+	}
+	return out
 }

@@ -24,6 +24,41 @@ uki:
   # previous output so we never re-clone our own clones.
   entry_prefix: "uki-btrfs-snapshots-"
 
+  # Optional: exec a signing command after each clone is written. "{}" is
+  # substituted with the clone's absolute path. Unset → clones written
+  # unsigned (fine on SB-disabled systems).
+  #
+  # Accepts both list and string forms. Comment in the one that matches
+  # your signing tooling.
+  #
+  # peseal (sibling binary, pure-Go):
+  # sign_command: ["peseal", "sign", "{}"]
+  #
+  # sbctl (Arch — community repo, manages its own keystore):
+  # sign_command: ["sbctl", "sign", "-s", "{}"]
+  #
+  # sbsign (Ubuntu / cross-distro — explicit key + cert per invocation):
+  # sign_command:
+  #   - "sbsign"
+  #   - "--key"
+  #   - "/etc/secureboot/MOK.key"
+  #   - "--cert"
+  #   - "/etc/secureboot/MOK.crt"
+  #   - "--output"
+  #   - "{}"
+  #   - "{}"
+  #
+  # pesign (Fedora — needs a wrapper since it can't sign in-place safely):
+  # sign_command: ["/usr/local/sbin/sign-uki-pesign", "{}"]
+  #
+  # systemd-sbsign (Tumbleweed / systemd >= 254):
+  # sign_command:
+  #   - "systemd-sbsign"
+  #   - "sign"
+  #   - "--private-key=/etc/sdbootutil/keys/db.key"
+  #   - "--certificate=/etc/sdbootutil/keys/db.crt"
+  #   - "{}"
+
 # Snapshot discovery — identical to refind/bls.
 snapshot:
   search_directories:

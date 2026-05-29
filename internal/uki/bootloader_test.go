@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -175,7 +176,7 @@ func TestApply_WritesBinaryAndRemovesOrphans(t *testing.T) {
 	out, err := gen.Generate(input)
 	require.NoError(t, err)
 
-	require.NoError(t, Apply(out, runner.New(false)))
+	require.NoError(t, Apply(out, runner.New(false), nil))
 
 	// the new clone exists and parses as a UKI
 	clones, err := filepath.Glob(filepath.Join(outDir, "uki-btrfs-snapshots-300-*.efi"))
@@ -209,7 +210,7 @@ func TestApply_DryRunTouchesNothing(t *testing.T) {
 	out, err := NewGenerator().Generate(input)
 	require.NoError(t, err)
 
-	require.NoError(t, Apply(out, runner.New(true)))
+	require.NoError(t, Apply(out, runner.New(true), nil))
 
 	// orphan stays on disk
 	_, err = os.Stat(orphanPath)
@@ -222,5 +223,108 @@ func TestApply_DryRunTouchesNothing(t *testing.T) {
 }
 
 func TestApply_NilOutput(t *testing.T) {
-	assert.NoError(t, Apply(nil, runner.New(false)))
+	assert.NoError(t, Apply(nil, runner.New(false), nil))
+}
+
+func TestSubstituteTemplate_ReplacesBraces(t *testing.T) {
+	tests := []struct {
+		tmpl []string
+		path string
+		want []string
+	}{
+		{[]string{"peseal", "sign", "{}"}, "/boot/x.efi", []string{"peseal", "sign", "/boot/x.efi"}},
+		{[]string{"sbsign", "--output", "{}", "{}"}, "/a.efi", []string{"sbsign", "--output", "/a.efi", "/a.efi"}},
+		{[]string{"echo", "no-placeholder"}, "/x", []string{"echo", "no-placeholder"}},
+		{nil, "/x", nil},
+	}
+	for _, tt := range tests {
+		got := substituteTemplate(tt.tmpl, tt.path)
+		assert.Equal(t, tt.want, got)
+	}
+}
+
+func writeFakeSigner(t *testing.T, dir string) string {
+	t.Helper()
+	script := filepath.Join(dir, "fake-signer")
+	body := "#!/bin/sh\nprintf '%s\\n' \"$1\" >> " + filepath.Join(dir, "calls.log") + "\n"
+	require.NoError(t, os.WriteFile(script, []byte(body), 0o755))
+	return script
+}
+
+func TestApply_RunsSignCommandAfterEachClone(t *testing.T) {
+	espDir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(espDir, "EFI", "Linux"), 0o755))
+
+	input := bootloader.Input{
+		Cfg:     cfgWith(true, "/EFI/Linux", "uki-btrfs-snapshots-"),
+		ESPPath: espDir,
+		ProcessedSnapshots: []*btrfs.Snapshot{
+			newSnap(256, "@/.snapshots/1/snapshot"),
+			newSnap(257, "@/.snapshots/2/snapshot"),
+		},
+		SourceUKIs: []*kernel.BootSet{srcUKI(t, "linux")},
+	}
+	out, err := NewGenerator().Generate(input)
+	require.NoError(t, err)
+
+	signer := writeFakeSigner(t, espDir)
+	signCmd := []string{signer, "{}"}
+
+	require.NoError(t, Apply(out, runner.New(false), signCmd))
+
+	log, err := os.ReadFile(filepath.Join(espDir, "calls.log"))
+	require.NoError(t, err)
+	calls := strings.Split(strings.TrimSpace(string(log)), "\n")
+	assert.Len(t, calls, 2, "sign command must run exactly once per clone")
+	for _, p := range calls {
+		assert.True(t, strings.HasSuffix(p, ".efi"), "called paths must be the clone paths")
+	}
+}
+
+func TestApply_NoSignCommandSkipsExec(t *testing.T) {
+	espDir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(espDir, "EFI", "Linux"), 0o755))
+	input := bootloader.Input{
+		Cfg:                cfgWith(true, "/EFI/Linux", "uki-btrfs-snapshots-"),
+		ESPPath:            espDir,
+		ProcessedSnapshots: []*btrfs.Snapshot{newSnap(256, "@/.snapshots/1/snapshot")},
+		SourceUKIs:         []*kernel.BootSet{srcUKI(t, "linux")},
+	}
+	out, _ := NewGenerator().Generate(input)
+	require.NoError(t, Apply(out, runner.New(false), nil), "nil sign command must be a no-op, not an error")
+}
+
+func TestApply_SignCommandFailureAggregatesIntoErrors(t *testing.T) {
+	espDir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(espDir, "EFI", "Linux"), 0o755))
+	input := bootloader.Input{
+		Cfg:                cfgWith(true, "/EFI/Linux", "uki-btrfs-snapshots-"),
+		ESPPath:            espDir,
+		ProcessedSnapshots: []*btrfs.Snapshot{newSnap(256, "@/.snapshots/1/snapshot")},
+		SourceUKIs:         []*kernel.BootSet{srcUKI(t, "linux")},
+	}
+	out, _ := NewGenerator().Generate(input)
+
+	// /bin/false exits 1 unconditionally — every clone's sign step fails.
+	err := Apply(out, runner.New(false), []string{"/bin/false", "{}"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "sign", "sign failures must be visible in the aggregated error")
+}
+
+func TestApply_SignSkippedInDryRun(t *testing.T) {
+	espDir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(espDir, "EFI", "Linux"), 0o755))
+	input := bootloader.Input{
+		Cfg:                cfgWith(true, "/EFI/Linux", "uki-btrfs-snapshots-"),
+		ESPPath:            espDir,
+		ProcessedSnapshots: []*btrfs.Snapshot{newSnap(256, "@/.snapshots/1/snapshot")},
+		SourceUKIs:         []*kernel.BootSet{srcUKI(t, "linux")},
+	}
+	out, _ := NewGenerator().Generate(input)
+
+	signer := writeFakeSigner(t, espDir)
+	require.NoError(t, Apply(out, runner.New(true), []string{signer, "{}"}))
+
+	_, err := os.Stat(filepath.Join(espDir, "calls.log"))
+	assert.True(t, os.IsNotExist(err), "dry-run must not actually exec the sign command")
 }
