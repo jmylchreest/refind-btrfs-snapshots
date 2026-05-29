@@ -21,7 +21,8 @@ type Generator interface {
 // need. Each implementation reads only what's relevant. SourceEntries
 // originates from whatever native boot config the system already has
 // (rEFInd menuentries today) and supplies the canonical cmdline/loader
-// paths used to derive snapshot variants.
+// paths used to derive snapshot variants. SourceUKIs supplies the UKI
+// generator with the live-system UKIs to clone (one clone per snapshot).
 type Input struct {
 	Cfg                *config.Config
 	ESPPath            string
@@ -29,6 +30,7 @@ type Input struct {
 	ProcessedSnapshots []*btrfs.Snapshot
 	BootPlans          []*kernel.BootPlan
 	SourceEntries      []SourceEntry
+	SourceUKIs         []*kernel.BootSet
 }
 
 type SourceEntry struct {
@@ -38,7 +40,18 @@ type SourceEntry struct {
 	Options string
 }
 
+// BinaryWrite is a planned out-of-band binary file write. The UKI generator
+// uses it for cloned UKIs because their bytes are unsuitable for the
+// text-diff FileDiff pipeline. Generators that emit only text (rEFInd, BLS)
+// leave this slice nil.
+type BinaryWrite struct {
+	Path        string
+	Content     []byte
+	Description string
+}
+
 type Output struct {
 	Diffs          []*diff.FileDiff
 	UpdatedConfigs []string
+	BinaryWrites   []*BinaryWrite
 }

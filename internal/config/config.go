@@ -8,6 +8,7 @@ type Config struct {
 	Behavior BehaviorConfig `koanf:"behavior"`
 	Kernel   KernelConfig   `koanf:"kernel"`
 	BLS      BLSConfig      `koanf:"bls"`
+	UKI      UKIConfig      `koanf:"uki"`
 	Display  DisplayConfig  `koanf:"display"`
 	Advanced AdvancedConfig `koanf:"advanced"`
 	List     ListConfig     `koanf:"list"`
@@ -69,6 +70,15 @@ type DisplayConfig struct {
 type BLSConfig struct {
 	WriteEntries Truthy `koanf:"write_entries"`
 	EntriesDir   string `koanf:"entries_dir"`
+	EntryPrefix  string `koanf:"entry_prefix"`
+}
+
+// UKIConfig: emit one cloned UKI per (snapshot × source UKI) under OutputDir,
+// each with .cmdline rewritten to point at the snapshot's subvolume. Consumed
+// by the uki-btrfs-snapshots binary; refind/bls binaries ignore it.
+type UKIConfig struct {
+	WriteEntries Truthy `koanf:"write_entries"`
+	OutputDir    string `koanf:"output_dir"`
 	EntryPrefix  string `koanf:"entry_prefix"`
 }
 

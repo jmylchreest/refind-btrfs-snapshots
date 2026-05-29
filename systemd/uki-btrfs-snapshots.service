@@ -1,0 +1,18 @@
+[Unit]
+Description=Clone Unified Kernel Images per btrfs snapshot
+Documentation=https://github.com/jmylchreest/refind-btrfs-snapshots
+After=local-fs.target
+ConditionPathExists=/usr/bin/uki-btrfs-snapshots
+ConditionPathExists=/etc/uki-btrfs-snapshots.yaml
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/uki-btrfs-snapshots --config /etc/uki-btrfs-snapshots.yaml generate -y
+User=root
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=300
+SyslogIdentifier=uki-btrfs-snapshots
+
+[Install]
+WantedBy=multi-user.target

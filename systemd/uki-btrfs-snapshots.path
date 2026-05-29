@@ -1,0 +1,25 @@
+[Unit]
+Description=Watch for btrfs snapshot and UKI changes
+Documentation=https://github.com/jmylchreest/refind-btrfs-snapshots
+ConditionPathExists=/.snapshots
+
+[Path]
+# Monitor the default snapshot directory for changes (snapshot add/remove
+# is the primary trigger).
+PathChanged=/.snapshots
+
+# Monitor the canonical UKI dir on the ESP so kernel rebuilds (which
+# regenerate the source UKIs in place) re-fan out per-snapshot clones.
+# Adjust to your ESP mount point if not /boot.
+PathChanged=/boot/EFI/Linux
+
+# Example for additional snapshot locations (uncomment as needed):
+# PathChanged=/run/timeshift/backup/timeshift-btrfs/snapshots
+
+# Wait 10 seconds after the last change before triggering — coalesces
+# the multiple writes a kernel rebuild typically produces.
+TriggerLimitIntervalSec=10
+TriggerLimitBurst=1
+
+[Install]
+WantedBy=multi-user.target

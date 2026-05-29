@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Regenerate the committed UKI test fixtures under internal/kernel/testdata/.
+# Regenerate the committed UKI test fixtures under pkg/uki/testdata/.
 #
-# These fixtures back InspectUKI's parsing tests. They're committed binaries;
-# regenerating is only needed when the test expectations change.
+# These fixtures back pkg/uki's parsing/round-trip tests (and internal/kernel
+# InspectUKI's fixture tests, which use them through pkg/uki). They're
+# committed binaries; regenerating is only needed when test expectations
+# change.
 #
 # Requires `ukify` (systemd-ukify package on Arch). Skips with a clear message
 # and exits 0 if `ukify` isn't on PATH — safe to invoke from Makefile / CI
@@ -14,7 +16,7 @@
 
 set -euo pipefail
 
-OUT_DIR="$(cd "$(dirname "$0")/.." && pwd)/internal/kernel/testdata"
+OUT_DIR="$(cd "$(dirname "$0")/.." && pwd)/pkg/uki/testdata"
 
 if ! command -v ukify >/dev/null 2>&1; then
     echo "ukify not found on PATH — skipping fixture regeneration."

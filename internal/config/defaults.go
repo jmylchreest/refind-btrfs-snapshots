@@ -32,6 +32,11 @@ func Defaults() Config {
 			EntriesDir:   "/loader/entries",
 			EntryPrefix:  "bls-btrfs-snapshots-",
 		},
+		UKI: UKIConfig{
+			WriteEntries: Truthy(false),
+			OutputDir:    "/EFI/Linux",
+			EntryPrefix:  "uki-btrfs-snapshots-",
+		},
 		Advanced: AdvancedConfig{
 			Naming: NamingConfig{
 				RwsnapFormat: "2006-01-02_15-04-05",
