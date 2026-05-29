@@ -8,7 +8,7 @@ GOARCH    ?= $(shell go env GOARCH)
 GOOS      ?= linux
 
 # Binaries this repo builds. Per-binary build targets are derived from this list.
-BINARIES  := refind-btrfs-snapshots bls-btrfs-snapshots uki-btrfs-snapshots kernel-spy
+BINARIES  := refind-btrfs-snapshots bls-btrfs-snapshots uki-btrfs-snapshots peseal kernel-spy
 
 # ldflags inject build metadata into internal/version, which every binary that
 # wires it (refind, bls) reads from. kernel-spy doesn't import internal/version;
@@ -67,6 +67,8 @@ docs: docs-clean
 	  $$TMP/bls-btrfs-snapshots gen-docs $(MAN_DIR) && \
 	  go build -tags=gendocs -o $$TMP/uki-btrfs-snapshots    ./cmd/uki-btrfs-snapshots    && \
 	  $$TMP/uki-btrfs-snapshots gen-docs $(MAN_DIR) && \
+	  go build -tags=gendocs -o $$TMP/peseal                 ./cmd/peseal                 && \
+	  $$TMP/peseal gen-docs $(MAN_DIR) && \
 	  rm -rf $$TMP
 	@echo "Generated man pages:"
 	@ls $(MAN_DIR)/ | sed 's/^/  /'

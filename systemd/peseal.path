@@ -1,0 +1,20 @@
+[Unit]
+Description=Watch ESP for unsigned UKIs and EFI binaries
+Documentation=https://github.com/jmylchreest/refind-btrfs-snapshots
+ConditionPathExists=/etc/peseal.yaml
+
+[Path]
+# Watch both common ESP layouts so the unit just works without editing:
+#   /boot      → ESP-at-/boot (Arch typical)
+#   /boot/efi  → ESP-at-/boot/efi (Ubuntu / Fedora / Tumbleweed typical)
+# Whichever directory exists fires the .service; the other is a no-op.
+PathChanged=/boot/EFI/Linux
+PathChanged=/boot/efi/EFI/Linux
+
+# Coalesce the multiple writes a kernel rebuild or snapshot rotation
+# typically produces — wait 10s of quiescence before firing.
+TriggerLimitIntervalSec=10
+TriggerLimitBurst=1
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,18 @@
+[Unit]
+Description=Sign PE binaries with peseal
+Documentation=https://github.com/jmylchreest/refind-btrfs-snapshots
+After=local-fs.target
+ConditionPathExists=/usr/bin/peseal
+ConditionPathExists=/etc/peseal.yaml
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/peseal --config /etc/peseal.yaml sign -y
+User=root
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=300
+SyslogIdentifier=peseal
+
+[Install]
+WantedBy=multi-user.target
