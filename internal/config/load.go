@@ -78,6 +78,7 @@ func Load(cfgFile string, flagOverrides map[string]any) (*Config, error) {
 		DecoderConfig: &mapstructure.DecoderConfig{
 			DecodeHook: mapstructure.ComposeDecodeHookFunc(
 				mapstructure.TextUnmarshallerHookFunc(),
+				shellArgvDecodeHook,
 				mapstructure.StringToSliceHookFunc(","),
 			),
 			Metadata:         nil,

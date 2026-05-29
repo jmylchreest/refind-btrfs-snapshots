@@ -35,6 +35,7 @@ func init() {
 	generateCmd.Flags().Bool("dry-run", false, "Show what would be written without making changes")
 	generateCmd.Flags().BoolP("yes", "y", false, "Automatically approve all changes without prompting")
 	generateCmd.Flags().Bool("force", false, "Force generation even if booted from a snapshot")
+	generateCmd.Flags().String("sign-command", "", "Shell-quoted command to exec per clone after writing; {} is substituted with the clone path (overrides uki.sign_command)")
 }
 
 func loadConfig(cmd *cobra.Command) (*config.Config, error) {
@@ -133,7 +134,16 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		diff.ShowPatchWithPager(patch, false)
 	}
 
-	if err := uki.Apply(out, r); err != nil {
+	signCommand := cfg.UKI.SignCommand.Argv()
+	if flagSign, _ := cmd.Flags().GetString("sign-command"); flagSign != "" {
+		argv, err := config.ParseShellArgv(flagSign)
+		if err != nil {
+			return fmt.Errorf("--sign-command: %w", err)
+		}
+		signCommand = argv
+	}
+
+	if err := uki.Apply(out, r, signCommand); err != nil {
 		return fmt.Errorf("apply UKI clones: %w", err)
 	}
 	log.Info().Int("clones", len(out.BinaryWrites)).Msg("UKI clones written")
