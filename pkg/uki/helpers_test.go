@@ -143,6 +143,28 @@ func TestOSRelease_ParsesKeyValueAndStripsQuotes(t *testing.T) {
 	}
 }
 
+func TestOSRelease_SkipsCommentLines(t *testing.T) {
+	osrel := []byte("# this is a comment\nID=arch\n# trailing comment\nNAME=\"Arch Linux\"\n\x00")
+	pe := buildPE(t, []peSection{
+		{name: ".linux", data: []byte("k")},
+		{name: ".osrel", data: osrel},
+	})
+	img, err := Parse(bytes.NewReader(pe))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	rel := img.OSRelease()
+	if rel["ID"] != "arch" {
+		t.Errorf("OSRelease[ID] = %q, want arch", rel["ID"])
+	}
+	if rel["NAME"] != "Arch Linux" {
+		t.Errorf("OSRelease[NAME] = %q, want \"Arch Linux\"", rel["NAME"])
+	}
+	if _, hasComment := rel["#"]; hasComment {
+		t.Error("OSRelease leaked a comment line as a key")
+	}
+}
+
 func TestOSRelease_EmptyWhenMissing(t *testing.T) {
 	pe := buildPE(t, []peSection{{name: ".linux", data: []byte("k")}})
 	img, err := Parse(bytes.NewReader(pe))

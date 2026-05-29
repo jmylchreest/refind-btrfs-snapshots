@@ -39,6 +39,11 @@ const (
 // a UKI from a plain EFI executable).
 var ErrNotUKI = errors.New("uki: no .linux section (not a UKI)")
 
+// ErrNotPE32Plus is returned when the input parses as PE but is not the
+// PE32+ (64-bit) variant the UAPI UKI spec requires. UEFI firmware that
+// loads UKIs runs in long mode; PE32 (32-bit) binaries are out of scope.
+var ErrNotPE32Plus = errors.New("uki: not a PE32+ binary")
+
 // PE32+ structural constants.
 const (
 	dosELfanewOffset = 0x3C // 4-byte offset to PE signature inside DOS header
@@ -48,10 +53,14 @@ const (
 
 	// OptionalHeader field offsets (PE32+ layout); all relative to the
 	// start of the OptionalHeader.
+	optFieldMagic            = 0
 	optFieldSectionAlignment = 32
 	optFieldFileAlignment    = 36
 	optFieldSizeOfImage      = 56
 	optFieldSizeOfHeaders    = 60
+
+	// PE OptionalHeader Magic values.
+	optMagicPE32Plus = 0x20B
 
 	// COFF field offsets relative to COFF header start.
 	coffFieldNumberOfSections     = 2
@@ -98,11 +107,6 @@ func Parse(r io.Reader) (*Image, error) {
 	if err != nil {
 		return nil, fmt.Errorf("uki: read: %w", err)
 	}
-	f, err := pe.NewFile(bytes.NewReader(raw))
-	if err != nil {
-		return nil, fmt.Errorf("uki: parse PE: %w", err)
-	}
-	defer f.Close()
 
 	if len(raw) < dosELfanewOffset+4 {
 		return nil, fmt.Errorf("uki: truncated DOS header")
@@ -117,6 +121,18 @@ func Parse(r io.Reader) (*Image, error) {
 	if uint64(optOffset)+uint64(optHeaderSize) > uint64(len(raw)) {
 		return nil, fmt.Errorf("uki: truncated OptionalHeader")
 	}
+	// Gate on PE32+ Magic before debug/pe runs — debug/pe dispatches its
+	// header reader off Magic and would otherwise mask the spec violation
+	// with a layout-mismatch error.
+	if optHeaderSize < optFieldMagic+2 || binary.LittleEndian.Uint16(raw[optOffset+optFieldMagic:optOffset+optFieldMagic+2]) != optMagicPE32Plus {
+		return nil, ErrNotPE32Plus
+	}
+
+	f, err := pe.NewFile(bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("uki: parse PE: %w", err)
+	}
+	defer f.Close()
 
 	img := &Image{
 		coffOffset:    coffOffset,

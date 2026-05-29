@@ -333,6 +333,71 @@ func TestRemoveSection_ReturnsFalseForMissing(t *testing.T) {
 	}
 }
 
+func TestParse_RejectsPE32(t *testing.T) {
+	// The UAPI UKI spec mandates PE32+. Manufacture a PE32 image by
+	// flipping the OptionalHeader Magic byte on an otherwise-valid
+	// PE32+ blob and assert the strict gate trips.
+	pe := buildPE(t, []peSection{{name: ".linux", data: []byte("k")}})
+	const dosHeaderLen, peSigLen, coffHeaderLen = 64, 4, 20
+	optMagicOff := dosHeaderLen + peSigLen + coffHeaderLen
+	binary.LittleEndian.PutUint16(pe[optMagicOff:optMagicOff+2], 0x10B) // PE32
+
+	_, err := Parse(bytes.NewReader(pe))
+	if !errors.Is(err, ErrNotPE32Plus) {
+		t.Fatalf("err = %v, want ErrNotPE32Plus", err)
+	}
+}
+
+func TestParseFile_OpenError(t *testing.T) {
+	_, err := ParseFile(filepath.Join(t.TempDir(), "does-not-exist.efi"))
+	if err == nil {
+		t.Fatal("expected error for non-existent path, got nil")
+	}
+}
+
+func TestUname_EmptyWhenMissing(t *testing.T) {
+	pe := buildPE(t, []peSection{{name: ".linux", data: []byte("k")}})
+	img, err := Parse(bytes.NewReader(pe))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got := img.Uname(); got != "" {
+		t.Errorf("Uname() = %q, want empty", got)
+	}
+}
+
+func TestSBATPreservedThroughRoundTrip(t *testing.T) {
+	// The real ukify-built fixture carries a .sbat section. Confirm
+	// that mutating an unrelated section (.cmdline) leaves .sbat
+	// byte-identical through Parse → SetSection → WriteTo → Parse.
+	img, err := ParseFile(filepath.Join("testdata", "uki-single-profile.efi"))
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+	origSBAT := img.Section(SectionSBAT)
+	if origSBAT == nil {
+		t.Skip("fixture has no .sbat — regenerate with sbat support")
+	}
+	origBytes := append([]byte(nil), origSBAT.Data...)
+
+	img.SetCmdline("root=UUID=x rw rootflags=subvol=@/snap,subvolid=42")
+	var buf bytes.Buffer
+	if _, err := img.WriteTo(&buf); err != nil {
+		t.Fatalf("WriteTo: %v", err)
+	}
+	rt, err := Parse(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		t.Fatalf("re-parse: %v", err)
+	}
+	rtSBAT := rt.Section(SectionSBAT)
+	if rtSBAT == nil {
+		t.Fatal("re-parsed image has no .sbat")
+	}
+	if !bytes.Equal(origBytes, rtSBAT.Data) {
+		t.Errorf(".sbat mutated by .cmdline rewrite\norig %x\nrt   %x", origBytes, rtSBAT.Data)
+	}
+}
+
 func TestSetSection_RewriteRealFixtureCmdline(t *testing.T) {
 	// End-to-end UKI cloning shape: load a real ukify-built UKI, swap its
 	// .cmdline for a snapshot-rooted one, write, reparse, verify the
