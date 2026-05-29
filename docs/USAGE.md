@@ -103,7 +103,7 @@ A drop-in `.conf` file under `<esp>/loader/entries/*.conf` describes the entry. 
 
 A single PE/EFI binary at `<esp>/EFI/Linux/<name>.efi` containing the kernel, initramfs, cmdline, and OS-release metadata. The systemd-stub launches the embedded kernel with the embedded cmdline. Spec: <https://uapi-group.org/specifications/specs/boot_loader_specification/#type-2-efi-unified-kernel-images>.
 
-**Discovery only — not snapshot-bootable.** We detect and inspect UKIs (they show up in `list bootsets`, `status`, and `kernel-spy`, and their embedded kernel version participates in staleness detection), but we do not produce snapshot boot entries for UKI boot sets. A snapshot-bootable cmdline is `rootflags=subvol=<snap>,subvolid=<id>`, and on a UKI that lives inside the signed `.cmdline` PE section — there's no generally-reliable boot-loader-side override, so making a snapshot bootable would require rewriting (and, under Secure Boot, re-signing) the UKI per snapshot. That's tracked as a planned standalone `uki-btrfs-snapshots` binary — see [`WISHLIST.md`](WISHLIST.md).
+**Discovery-only in this binary; snapshot booting handled by [`uki-btrfs-snapshots`](../cmd/uki-btrfs-snapshots/).** UKIs show up in `list bootsets`, `status`, and `kernel-spy`; their embedded kernel version participates in staleness detection. The `uki-btrfs-snapshots` sibling clones each source UKI per snapshot to `<esp>/EFI/Linux/<prefix><snap-id>-<src>.efi` with the `.cmdline` PE section rewritten to point at the snapshot's subvolume. Pure-Go via the in-repo `pkg/uki` library — no `ukify`/`objcopy` dependency. Secure Boot signing is configurable via `uki.sign_command` (or via the standalone [`peseal`](../cmd/peseal/) binary on a decoupled `.path` trigger).
 
 ## Commands
 
@@ -643,7 +643,8 @@ Shows: ESP detection, snapshot discovery, boot image scanning, kernel version in
 | BLS-aware GRUB  | `bls-btrfs-snapshots`            | ESP mode only        | Same `.conf` output; works wherever `GRUB_ENABLE_BLSCFG=true`.                                                   |
 | non-BLS GRUB    | (none yet)                       | —                    | Not currently planned.                                                                                           |
 | limine          | (none yet)                       | —                    | Not currently planned.                                                                                           |
-| UKI host        | (planned)                        | —                    | A `uki-btrfs-snapshots` binary that clones UKIs per snapshot is on the wishlist; see [WISHLIST.md](WISHLIST.md). |
+| UKI host        | `uki-btrfs-snapshots`            | ESP mode only        | Clones each source UKI per snapshot to `<esp>/EFI/Linux/` with the `.cmdline` rewritten. Optional `sign_command` execs a signer per clone (peseal/sbctl/sbsign/pesign — see [cmd README](../cmd/uki-btrfs-snapshots/README.md)). |
+| Authenticode    | `peseal`                         | n/a                  | Standalone PE signer. Watches `/boot/EFI/Linux` + `/boot/efi/EFI/Linux` via its `.path` unit and signs whatever lands there. Used by `uki-btrfs-snapshots` via `sign_command` or independently against any UKI/loader. |
 
 For inspecting what the discovery layer sees on a given host — useful regardless of which generator binary you use — the `kernel-spy` binary dumps every detected kernel image, initramfs, microcode blob, BLS entry, and UKI without modifying anything.
 

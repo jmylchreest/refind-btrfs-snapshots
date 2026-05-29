@@ -115,7 +115,7 @@ Yes. If your system transitioned between boot configurations over time, older sn
 
 **Q: I use Unified Kernel Images (UKIs). Are they supported?**
 
-UKIs are **discovered and inspected** — they appear in `list bootsets`, `status`, and `kernel-spy`, and their embedded kernel version participates in staleness detection. We do **not** make snapshots bootable for UKI boot sets: a UKI's cmdline lives in its signed `.cmdline` PE section, and there's no general boot-loader-side override, so producing a snapshot boot entry would require rewriting (and re-signing under Secure Boot) the UKI per snapshot. That's tracked as a planned standalone `uki-btrfs-snapshots` binary — see [`docs/WISHLIST.md`](docs/WISHLIST.md).
+Yes, via the [`uki-btrfs-snapshots`](#related-binaries) sibling. It clones each source UKI per snapshot to `<esp>/EFI/Linux/<prefix><snap-id>-<src>.efi` with the `.cmdline` PE section rewritten to point at the snapshot's subvolume. Secure Boot signing is configurable via `uki.sign_command` — point it at [`peseal`](cmd/peseal/) (our pure-Go signer), `sbctl`, `sbsign`, `pesign`, or any custom script. Per-distro templates in the [cmd README](cmd/uki-btrfs-snapshots/README.md). For decoupled signing, install `peseal` and let its `.path` unit watch the ESP independently.
 
 **Q: I use systemd-boot's BLS `.conf` files. Do they affect anything?**
 
@@ -123,15 +123,15 @@ For rEFInd output, BLS-tagged boot sets are generated with the same shape as Spl
 
 ## Related binaries
 
-This repository ships three binaries built from a shared core (snapshot discovery, kernel/UKI inspection, fstab alignment, planner). Each one targets a different bootloader story; install the one(s) you need.
+This repository ships five binaries built from a shared core (snapshot discovery, kernel/UKI inspection, fstab alignment, planner). Each one targets a different boot story; install the one(s) you need.
 
 | Binary | Purpose | Released as |
 |---|---|---|
 | `refind-btrfs-snapshots` | Generate rEFInd `submenuentry` blocks for each snapshot. Supports both ESP-mode and btrfs-mode snapshots via rEFInd's btrfs driver. | AUR + GitHub Releases |
 | `bls-btrfs-snapshots` | Generate Boot Loader Specification Type #1 `.conf` entries under `<esp>/loader/entries/` for systemd-boot and BLS-aware GRUB. ESP-mode snapshots only. | GitHub Releases |
-| `kernel-spy` | Read-only diagnostic — dumps every kernel image, initramfs, microcode, BLS entry, and UKI the discovery layer can see on a host. Useful for debugging snapshot-bootability questions. | GitHub Releases |
-
-A planned `uki-btrfs-snapshots` binary that would make UKI hosts snapshot-bootable by cloning UKIs per snapshot is tracked in [`docs/WISHLIST.md`](docs/WISHLIST.md).
+| `uki-btrfs-snapshots` | Clone Unified Kernel Images per snapshot under `<esp>/EFI/Linux/`, rewriting `.cmdline` so each clone boots its snapshot's subvolume. Optional `sign_command` execs a signer per clone — see [distro templates](cmd/uki-btrfs-snapshots/README.md). | GitHub Releases |
+| `peseal` | Pure-Go Authenticode signer for PE32+ binaries (UKIs, EFI loaders). Wraps go-uefi for `sbctl`-compatible signatures. Idempotent; ships a `.path` unit for decoupled ESP watching. | GitHub Releases |
+| `kernel-spy` | Read-only diagnostic — dumps every kernel image, initramfs, microcode, BLS entry, and UKI the discovery layer can see on a host. | GitHub Releases |
 
 ## Links
 
