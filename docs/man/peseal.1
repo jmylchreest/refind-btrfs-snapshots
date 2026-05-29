@@ -1,0 +1,85 @@
+.nh
+.TH peseal 1
+.SH NAME
+peseal \- Sign and verify PE32+ binaries (Authenticode)
+
+.SH SYNOPSIS
+\fBpeseal\fP [\fIglobal options\fP] \fICOMMAND\fP [\fIargs\fP]
+
+.SH DESCRIPTION
+Sign, verify, and inspect PE32+ Authenticode signatures on
+EFI binaries — Unified Kernel Images, bootloaders, loaders. Pure Go
+under the hood (wraps github.com/foxboron/go-uefi/authenticode);
+no objcopy, sbsign, pesign, or ukify dependency at runtime.
+
+.SH GLOBAL OPTIONS
+.EX
+  -c, --config string      Path to config file (default: /etc/peseal.yaml)
+      --log-level string   Log verbosity: trace, debug, info, warn, error
+.EE
+
+.SH COMMANDS
+.SS peseal inspect
+Print signature and PE/UKI metadata for files
+
+.PP
+Report Authenticode signature status, PE32+ header layout,
+section table, and (for UKIs) decoded .cmdline / .uname / .osrel
+content per file. Use --json for a structured form suitable for
+scripting.
+
+.PP
+\fBUsage:\fP \fBpeseal inspect [flags] FILE...\fR
+
+.PP
+\fBOptions:\fP
+
+.EX
+      --json   Emit machine-readable JSON instead of text
+.EE
+
+.SS peseal sign
+Sign PE32+ binaries with the configured key and certificate
+
+.PP
+Sign each named FILE (or every file matching the configured paths
+when no FILE is given) with the configured key + certificate. Idempotent
+by default: files already signed by the configured cert are skipped.
+
+.PP
+\fBUsage:\fP \fBpeseal sign [flags] [FILE...]\fR
+
+.PP
+\fBOptions:\fP
+
+.EX
+      --cert string      Path to PEM-encoded X.509 certificate (overrides config)
+      --dry-run          Show what would be signed without writing
+  -k, --key string       Path to PEM-encoded RSA private key (overrides config)
+      --no-skip-signed   Always re-sign, even if the file already carries a valid signature for the configured cert
+  -y, --yes              Auto-approve (no-op today; reserved for future confirm UX)
+.EE
+
+.SS peseal verify
+Verify Authenticode signatures against a trust certificate
+
+.PP
+Verify each FILE's Authenticode signature against the supplied
+certificate (or the configured cert_path). Exit code is non-zero if any
+file fails to verify.
+
+.PP
+\fBUsage:\fP \fBpeseal verify [flags] FILE...\fR
+
+.PP
+\fBOptions:\fP
+
+.EX
+      --cert string   Path to trust certificate (overrides config cert_path)
+.EE
+
+.SS peseal version
+Print version information
+
+.PP
+\fBUsage:\fP \fBpeseal version\fR

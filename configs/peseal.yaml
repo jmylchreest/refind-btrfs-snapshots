@@ -1,0 +1,33 @@
+# peseal: sign PE32+ binaries (UKIs, EFI loaders) with Authenticode.
+#
+# Standalone tool — has no awareness of snapshots, UKIs, or other
+# binaries in this repo. Wraps github.com/foxboron/go-uefi/authenticode
+# under the hood, so the produced signatures are byte-for-byte
+# compatible with what sbctl emits.
+#
+# Spec: https://learn.microsoft.com/en-us/windows/win32/debug/pe-format
+
+# PEM-encoded RSA private key + matching X.509 certificate. The cert
+# must chain to (or be) something enrolled in firmware (db or MOK) for
+# the signed binaries to boot under Secure Boot.
+#
+# Common conventions per distro:
+#   Arch (sbctl):     /usr/share/secureboot/keys/db/db.{key,pem}
+#   Ubuntu (MOK):     /etc/secureboot/MOK.{key,crt}
+#   Tumbleweed:       /etc/sdbootutil/keys/db.{key,crt}
+key_path: ""
+cert_path: ""
+
+# Files to sign when `peseal sign` is invoked without explicit args
+# (e.g. via the .path-triggered .service unit). Globs supported.
+paths:
+  - /boot/efi/EFI/Linux/*.efi
+  - /boot/EFI/Linux/*.efi
+
+# When true (default), files already signed by the configured cert are
+# skipped on subsequent runs — makes the .path trigger idempotent so a
+# spurious filesystem event doesn't bloat the cert table with duplicate
+# signatures. Set false to always re-sign.
+skip_already_signed: true
+
+log_level: info

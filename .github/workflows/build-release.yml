@@ -127,6 +127,7 @@ jobs:
           - { name: refind-btrfs-snapshots, path: ./cmd/refind-btrfs-snapshots, config: configs/refind-btrfs-snapshots.yaml, systemd: true,  man: true  }
           - { name: bls-btrfs-snapshots,    path: ./cmd/bls-btrfs-snapshots,    config: configs/bls-btrfs-snapshots.yaml,    systemd: true,  man: true  }
           - { name: uki-btrfs-snapshots,    path: ./cmd/uki-btrfs-snapshots,    config: configs/uki-btrfs-snapshots.yaml,    systemd: true,  man: true  }
+          - { name: peseal,                 path: ./cmd/peseal,                 config: configs/peseal.yaml,                 systemd: true,  man: true  }
           - { name: kernel-spy,             path: ./cmd/kernel-spy,             config: "",                                  systemd: false, man: false }
 
     steps:
@@ -206,7 +207,7 @@ jobs:
       fail-fast: false
       matrix:
         goarch: [amd64, arm64]
-        binary: [refind-btrfs-snapshots, bls-btrfs-snapshots, uki-btrfs-snapshots, kernel-spy]
+        binary: [refind-btrfs-snapshots, bls-btrfs-snapshots, uki-btrfs-snapshots, peseal, kernel-spy]
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -439,6 +440,7 @@ jobs:
             refind-btrfs-snapshots_linux_*
             bls-btrfs-snapshots_linux_*
             uki-btrfs-snapshots_linux_*
+            peseal_linux_*
             kernel-spy_linux_*
             checksums
           failOnError: false
