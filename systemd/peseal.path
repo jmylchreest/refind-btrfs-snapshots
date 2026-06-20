@@ -11,10 +11,8 @@ ConditionPathExists=/etc/peseal.yaml
 PathChanged=/boot/EFI/Linux
 PathChanged=/boot/efi/EFI/Linux
 
-# Coalesce the multiple writes a kernel rebuild or snapshot rotation
-# typically produces — wait 10s of quiescence before firing.
-TriggerLimitIntervalSec=10
-TriggerLimitBurst=1
+# Coalescing of the write burst is handled service-side (ExecStartPre settle +
+# Type=oneshot), not here: a .path unit has no debounce primitive.
 
 [Install]
 WantedBy=multi-user.target

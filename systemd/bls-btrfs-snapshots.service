@@ -8,6 +8,10 @@ ConditionPathExists=/etc/bls-btrfs-snapshots.yaml
 
 [Service]
 Type=oneshot
+# Settle window: a kernel rebuild or snapshot rotation produces a burst of
+# writes. Sleep briefly so they coalesce; because this is Type=oneshot, triggers
+# arriving during the sleep/run collapse into at most one re-run.
+ExecStartPre=/usr/bin/sleep 5
 ExecStart=/usr/bin/bls-btrfs-snapshots --config /etc/bls-btrfs-snapshots.yaml generate -y
 User=root
 StandardOutput=journal

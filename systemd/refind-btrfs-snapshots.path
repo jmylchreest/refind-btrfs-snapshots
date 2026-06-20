@@ -11,9 +11,8 @@ PathChanged=/.snapshots
 # PathChanged=/run/timeshift/backup/timeshift-btrfs/snapshots
 # PathChanged=/snapshots
 
-# Wait 10 seconds after the last change before triggering
-TriggerLimitIntervalSec=10
-TriggerLimitBurst=1
+# Coalescing of the write burst is handled service-side (ExecStartPre settle +
+# Type=oneshot), not here: a .path unit has no debounce primitive.
 
 [Install]
 WantedBy=multi-user.target
