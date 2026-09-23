@@ -392,7 +392,8 @@ func TestGenerateSingleMenuEntry(t *testing.T) {
 		UUID: "test-uuid",
 	}
 
-	content := generator.generateSingleMenuEntry("Arch Linux", templateEntry, snapshots, rootFS)
+	content, err := generator.generateSingleMenuEntry("Arch Linux", templateEntry, snapshots, rootFS)
+	require.NoError(t, err)
 
 	// Should contain menuentry
 	assert.Contains(t, content, "menuentry \"Arch Linux\" {")
@@ -401,7 +402,7 @@ func TestGenerateSingleMenuEntry(t *testing.T) {
 	assert.Contains(t, content, "    icon /EFI/refind/icons/os_arch.png")
 	assert.Contains(t, content, "    loader /boot/vmlinuz-linux")
 	assert.Contains(t, content, "    initrd /boot/initramfs-linux.img")
-	assert.Contains(t, content, "    options quiet rw rootflags=subvol=@ root=UUID=test-uuid")
+	assert.Contains(t, content, `    options "quiet rw rootflags=subvol=@ root=UUID=test-uuid"`)
 
 	// Should contain submenu for snapshot
 	assert.Contains(t, content, "    submenuentry \"Arch Linux (2025-06-12T07:00:18Z)\" {")
@@ -547,7 +548,8 @@ func TestGenerateSingleMenuEntry_MultipleInitrdDirectives(t *testing.T) {
 		UUID: "test-uuid",
 	}
 
-	content := generator.generateSingleMenuEntry("Arch Linux", templateEntry, snapshots, rootFS)
+	content, err := generator.generateSingleMenuEntry("Arch Linux", templateEntry, snapshots, rootFS)
+	require.NoError(t, err)
 
 	// Should contain menuentry
 	assert.Contains(t, content, "menuentry \"Arch Linux\" {")
@@ -565,7 +567,7 @@ func TestGenerateSingleMenuEntry_MultipleInitrdDirectives(t *testing.T) {
 	initramfsIndex := strings.Index(content, "initrd /boot/initramfs-linux.img")
 	assert.True(t, ucodeIndex < initramfsIndex, "Microcode initrd should appear before main initramfs")
 
-	assert.Contains(t, content, "    options quiet rw rootflags=subvol=@ root=UUID=test-uuid")
+	assert.Contains(t, content, `    options "quiet rw rootflags=subvol=@ root=UUID=test-uuid"`)
 
 	// Should contain submenu for snapshot
 	assert.Contains(t, content, "    submenuentry \"Arch Linux (2025-06-12T07:00:18Z)\" {")
@@ -617,7 +619,8 @@ func TestGenerateSingleMenuEntry_BtrfsMode(t *testing.T) {
 	}
 
 	rootFS := &btrfs.Filesystem{UUID: "test-uuid"}
-	content := generator.generateSingleMenuEntry("Arch Linux", templateEntry, []*btrfs.Snapshot{snapshot}, rootFS)
+	content, err := generator.generateSingleMenuEntry("Arch Linux", templateEntry, []*btrfs.Snapshot{snapshot}, rootFS)
+	require.NoError(t, err)
 
 	// Main entry should have ESP-relative paths (the default boot entry)
 	assert.Contains(t, content, "menuentry \"Arch Linux\" {")
@@ -665,11 +668,13 @@ func TestGenerateSingleMenuEntry_ESPModeUnchangedWithBootPlans(t *testing.T) {
 
 	// Generate WITH boot plans (ESP mode plan)
 	withPlans := NewGeneratorWithBootPlans("/boot/efi", "2006-01-02T15:04:05Z", false, nil, nil, []*kernel.BootPlan{espPlan})
-	contentWith := withPlans.generateSingleMenuEntry("Arch Linux", templateEntry, []*btrfs.Snapshot{snapshot}, rootFS)
+	contentWith, err := withPlans.generateSingleMenuEntry("Arch Linux", templateEntry, []*btrfs.Snapshot{snapshot}, rootFS)
+	require.NoError(t, err)
 
 	// Generate WITHOUT boot plans (old code path, no plans at all)
 	without := NewGenerator("/boot/efi", "2006-01-02T15:04:05Z", false)
-	contentWithout := without.generateSingleMenuEntry("Arch Linux", templateEntry, []*btrfs.Snapshot{snapshot}, rootFS)
+	contentWithout, err := without.generateSingleMenuEntry("Arch Linux", templateEntry, []*btrfs.Snapshot{snapshot}, rootFS)
+	require.NoError(t, err)
 
 	// Must be byte-identical — this is the key backward compat assertion
 	assert.Equal(t, contentWithout, contentWith,
@@ -719,8 +724,9 @@ func TestGenerateSingleMenuEntry_MixedModeSnapshots(t *testing.T) {
 	}
 
 	rootFS := &btrfs.Filesystem{UUID: "test-uuid"}
-	content := generator.generateSingleMenuEntry("Arch Linux", templateEntry,
+	content, err := generator.generateSingleMenuEntry("Arch Linux", templateEntry,
 		[]*btrfs.Snapshot{espSnap, btrfsSnap}, rootFS)
+	require.NoError(t, err)
 
 	// ESP submenu: must NOT have volume/loader/initrd overrides
 	espSubmenu := "submenuentry \"Arch Linux (2025-01-15T12:00:00Z)\""
