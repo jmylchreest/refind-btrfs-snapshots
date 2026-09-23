@@ -232,16 +232,7 @@ func (p *Parser) parseConfigFile(path string) ([]*MenuEntry, []string, []string,
 }
 
 func (p *Parser) parseMenuDirective(entry *MenuEntry, line string) {
-	parts := strings.SplitN(line, " ", 2)
-	if len(parts) < 1 {
-		return
-	}
-
-	directive := strings.TrimSpace(parts[0])
-	var value string
-	if len(parts) >= 2 {
-		value = strings.TrimSpace(parts[1])
-	}
+	directive, value := directiveValue(line)
 
 	switch directive {
 	case "icon":
@@ -261,13 +252,7 @@ func (p *Parser) parseMenuDirective(entry *MenuEntry, line string) {
 }
 
 func (p *Parser) parseSubmenuDirective(submenu *SubmenuEntry, line string) {
-	parts := strings.SplitN(line, " ", 2)
-	if len(parts) < 2 {
-		return
-	}
-
-	directive := strings.TrimSpace(parts[0])
-	value := strings.TrimSpace(parts[1])
+	directive, value := directiveValue(line)
 
 	switch directive {
 	case "loader":
@@ -356,64 +341,9 @@ func (p *Parser) parseRefindLinuxConf(path string) ([]*MenuEntry, error) {
 	return entries, scanner.Err()
 }
 
-// parseQuotedLine parses a line with quoted strings, handling escapes.
-// Uses an index-based loop so the index can be advanced by the unquoted-
-// string branch (range loops ignore mutations of the loop variable).
+// parseQuotedLine reads fields using rEFInd's quoting rules.
 func (p *Parser) parseQuotedLine(line string) []string {
-	var parts []string
-	var current strings.Builder
-	inQuotes := false
-	escaped := false
-
-	for i := 0; i < len(line); i++ {
-		char := rune(line[i])
-
-		if escaped {
-			current.WriteRune(char)
-			escaped = false
-			continue
-		}
-
-		if char == '\\' {
-			escaped = true
-			continue
-		}
-
-		if char == '"' {
-			if inQuotes {
-				parts = append(parts, current.String())
-				current.Reset()
-				inQuotes = false
-			} else {
-				inQuotes = true
-			}
-			continue
-		}
-
-		if inQuotes {
-			current.WriteRune(char)
-		} else if char == ' ' || char == '\t' {
-			continue
-		} else {
-			current.WriteRune(char)
-			for i+1 < len(line) {
-				next := rune(line[i+1])
-				if next == ' ' || next == '\t' || next == '"' {
-					break
-				}
-				current.WriteRune(next)
-				i++
-			}
-			parts = append(parts, current.String())
-			current.Reset()
-		}
-	}
-
-	if inQuotes && current.Len() > 0 {
-		parts = append(parts, current.String())
-	}
-
-	return parts
+	return configTokens(line)
 }
 
 func (p *Parser) findKernelInDir(dir string) string {
@@ -467,17 +397,9 @@ func parseBootOptions(options string) *BootOptions {
 }
 
 func extractQuotedValue(line, prefix string) string {
-	line = strings.TrimPrefix(line, prefix)
-	line = strings.TrimSpace(line)
-
-	if strings.HasSuffix(line, " {") {
-		line = strings.TrimSuffix(line, " {")
-		line = strings.TrimSpace(line)
+	tokens := configTokens(strings.TrimSpace(strings.TrimPrefix(line, prefix)))
+	if len(tokens) == 0 {
+		return ""
 	}
-
-	if strings.HasPrefix(line, "\"") && strings.HasSuffix(line, "\"") {
-		line = strings.Trim(line, "\"")
-	}
-
-	return line
+	return tokens[0]
 }

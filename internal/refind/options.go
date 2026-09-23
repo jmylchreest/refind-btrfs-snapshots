@@ -40,14 +40,6 @@ func (g *Generator) updateOptionsForSnapshot(originalOptions string, snapshot *b
 	options = parser.UpdateSubvol(options, snapshotSubvol)
 	options = parser.UpdateSubvolID(options, fmt.Sprintf("%d", snapshot.ID))
 
-	initrds := parser.SpaceParser.ExtractMultiple(options, "initrd")
-	if len(initrds) > 0 {
-		options = parser.SpaceParser.RemoveAll(options, "initrd")
-		for _, initrd := range initrds {
-			options = options + fmt.Sprintf(" initrd=%s", initrd)
-		}
-	}
-
 	return options
 }
 
