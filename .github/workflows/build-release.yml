@@ -1,5 +1,6 @@
 # Build workflow for refind-btrfs-snapshots
-# - On version tags (v*): Create a release, publish to AUR
+# - On stable version tags (vMAJOR.MINOR.PATCH): Create a release, publish to AUR
+# - On other version tags: Skip (including accidentally re-pushed dev tags)
 # - On main branch: Create a pre-release snapshot with dev version
 # - On PRs: Build and test only
 #
@@ -41,9 +42,9 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       version_tag: ${{ steps.version.outputs.version_tag }}
-      is_release: ${{ steps.version.outputs.is_release }}
-      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
-      should_skip: ${{ steps.skip.outputs.should_skip }}
+      is_release: ${{ steps.policy.outputs.is_release }}
+      is_prerelease: ${{ steps.policy.outputs.is_prerelease }}
+      should_skip: ${{ steps.policy.outputs.should_skip }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -54,24 +55,42 @@ jobs:
         id: version
         uses: jmylchreest/gha-extract-git-version@v1
 
-      - name: Check skip conditions
-        id: skip
+      - name: Check release policy
+        id: policy
+        shell: bash
         run: |
+          STABLE_TAG_PATTERN='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          IS_RELEASE=false
+          IS_PRERELEASE=true
           SHOULD_SKIP=false
 
-          # For main branch: skip if commit already has a release tag
-          if [[ "${{ github.ref }}" == refs/heads/main && "${{ steps.version.outputs.is_tagged }}" == "true" ]]; then
-            echo "Commit already has release tag, skipping main branch build"
-            SHOULD_SKIP=true
+          # Do not trust is_release from version extraction: pushed dev tags
+          # can be classified as releases. Only exact stable tags may publish.
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            if [[ "${GITHUB_REF#refs/tags/}" =~ $STABLE_TAG_PATTERN ]]; then
+              if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+                IS_RELEASE=true
+                IS_PRERELEASE=false
+              fi
+            else
+              echo "Skipping non-stable tag: $GITHUB_REF"
+              SHOULD_SKIP=true
+            fi
+          elif [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            # A dev tag on HEAD must not suppress the normal main snapshot.
+            if git tag --points-at HEAD | grep -E "$STABLE_TAG_PATTERN"; then
+              echo "Commit already has a stable release tag, skipping main branch build"
+              SHOULD_SKIP=true
+            fi
           fi
 
-          echo "should_skip=${SHOULD_SKIP}" >> $GITHUB_OUTPUT
+          echo "is_release=$IS_RELEASE" >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "should_skip=$SHOULD_SKIP" >> "$GITHUB_OUTPUT"
 
-          echo "Version: ${{ steps.version.outputs.version }}"
-          echo "Version Tag: ${{ steps.version.outputs.version_tag }}"
-          echo "Is Release: ${{ steps.version.outputs.is_release }}"
-          echo "Is Prerelease: ${{ steps.version.outputs.is_prerelease }}"
-          echo "Should Skip: ${SHOULD_SKIP}"
+          echo "Is Release: $IS_RELEASE"
+          echo "Is Prerelease: $IS_PRERELEASE"
+          echo "Should Skip: $SHOULD_SKIP"
 
   # ─── Stage 2: Test ────────────────────────────────────────────────────
   test:
