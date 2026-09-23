@@ -9,7 +9,8 @@ type Config struct {
 	GlobalConfig []string     `json:"global_config"`
 }
 
-// MenuEntry represents a rEFInd menu entry
+// MenuEntry represents a rEFInd menu entry. String fields are decoded values;
+// rEFInd quoting is applied only when serialising.
 type MenuEntry struct {
 	Title       string          `json:"title"`
 	Icon        string          `json:"icon"`

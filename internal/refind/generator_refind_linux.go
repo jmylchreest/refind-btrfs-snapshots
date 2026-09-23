@@ -57,6 +57,7 @@ func (g *Generator) UpdateRefindLinuxConfWithAllEntries(snapshots []*btrfs.Snaps
 // generateRefindLinuxConfWithAllEntries processes all entries and generates content with cleanup
 func (g *Generator) generateRefindLinuxConfWithAllEntries(originalContent string, snapshots []*btrfs.Snapshot, sourceEntries []*MenuEntry, rootFS *btrfs.Filesystem) (string, error) {
 	var lines []string
+	var serialiser configSerialiser
 	var inGeneratedSection bool
 	var foundMarkers bool
 
@@ -124,7 +125,7 @@ func (g *Generator) generateRefindLinuxConfWithAllEntries(originalContent string
 				snapshotTitle := fmt.Sprintf("%s (%s)", sourceEntry.Title, g.getSnapshotDisplayName(snapshot))
 				snapshotOptions := g.updateOptionsForSnapshot(sourceEntry.Options, snapshot)
 
-				snapshotLine := fmt.Sprintf("\"%s\" \"%s\"", snapshotTitle, snapshotOptions)
+				snapshotLine := serialiser.quote(snapshotTitle) + " " + serialiser.quote(snapshotOptions)
 				lines = append(lines, snapshotLine)
 			}
 		}
@@ -132,6 +133,9 @@ func (g *Generator) generateRefindLinuxConfWithAllEntries(originalContent string
 		lines = append(lines, "##refind-btrfs-snapshots-end")
 	}
 
+	if serialiser.err != nil {
+		return "", serialiser.err
+	}
 	return strings.Join(lines, "\n") + "\n", nil
 }
 

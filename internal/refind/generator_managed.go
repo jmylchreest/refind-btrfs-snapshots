@@ -40,10 +40,18 @@ func (g *Generator) GenerateManagedConfigDiff(sourceEntries []*MenuEntry, snapsh
 	content.WriteString("#\n")
 
 	if isNewFile {
-		content.WriteString(g.generateTemplateEntry(sourceEntries, snapshots, rootFS))
+		generated, err := g.generateTemplateEntry(sourceEntries, snapshots, rootFS)
+		if err != nil {
+			return nil, err
+		}
+		content.WriteString(generated)
 	} else {
 		content.WriteString("\n")
-		content.WriteString(g.generateFromExistingEntries(existingEntries, snapshots, rootFS))
+		generated, err := g.generateFromExistingEntries(existingEntries, snapshots, rootFS)
+		if err != nil {
+			return nil, err
+		}
+		content.WriteString(generated)
 	}
 
 	newContent := content.String()
@@ -64,8 +72,8 @@ func (g *Generator) GenerateManagedConfigDiff(sourceEntries []*MenuEntry, snapsh
 // generateTemplateEntry creates a template entry for new files.
 // When boot sets are available (from kernel.Scanner), generates one template
 // per detected kernel with accurate paths. Falls back to hardcoded Arch defaults.
-func (g *Generator) generateTemplateEntry(sourceEntries []*MenuEntry, snapshots []*btrfs.Snapshot, rootFS *btrfs.Filesystem) string {
-	var content strings.Builder
+func (g *Generator) generateTemplateEntry(sourceEntries []*MenuEntry, snapshots []*btrfs.Snapshot, rootFS *btrfs.Filesystem) (string, error) {
+	var content configSerialiser
 
 	content.WriteString("\n")
 	content.WriteString("# TEMPLATE ENTRY - Customize this example and remove the 'disabled' line to enable\n")
@@ -91,20 +99,20 @@ func (g *Generator) generateTemplateEntry(sourceEntries []*MenuEntry, snapshots 
 			}
 
 			displayName := bs.DisplayName()
-			content.WriteString(fmt.Sprintf("menuentry \"%s\" {\n", displayName))
+			content.WriteString(fmt.Sprintf("menuentry %s {\n", content.quote(displayName)))
 			content.WriteString("    disabled\n")
 			content.WriteString("    icon     /EFI/refind/icons/os_arch.png\n")
-			content.WriteString(fmt.Sprintf("    loader   %s\n", bs.Kernel.Path))
+			content.WriteString(fmt.Sprintf("    loader   %s\n", content.token(bs.Kernel.Path)))
 
 			for _, mc := range bs.Microcode {
-				content.WriteString(fmt.Sprintf("    initrd   %s\n", mc.Path))
+				content.WriteString(fmt.Sprintf("    initrd   %s\n", content.token(mc.Path)))
 			}
 			if bs.Initramfs != nil {
-				content.WriteString(fmt.Sprintf("    initrd   %s\n", bs.Initramfs.Path))
+				content.WriteString(fmt.Sprintf("    initrd   %s\n", content.token(bs.Initramfs.Path)))
 			}
 
 			if sampleOptions != "" {
-				content.WriteString(fmt.Sprintf("    options  %s\n", sampleOptions))
+				content.WriteString(fmt.Sprintf("    options  %s\n", content.quote(sampleOptions)))
 			}
 			content.WriteString("    \n")
 			content.WriteString("    # Snapshot submenus will be automatically generated below:\n")
@@ -114,10 +122,10 @@ func (g *Generator) generateTemplateEntry(sourceEntries []*MenuEntry, snapshots 
 					break
 				}
 				snapshotTitle := fmt.Sprintf("%s (%s)", displayName, g.getSnapshotDisplayName(snapshot))
-				content.WriteString(fmt.Sprintf("    submenuentry \"%s\" {\n", snapshotTitle))
+				content.WriteString(fmt.Sprintf("    submenuentry %s {\n", content.quote(snapshotTitle)))
 				if sampleOptions != "" {
 					snapshotOptions := g.updateOptionsForSnapshot(sampleOptions, snapshot)
-					content.WriteString(fmt.Sprintf("        options %s\n", snapshotOptions))
+					content.WriteString(fmt.Sprintf("        options %s\n", content.quote(snapshotOptions)))
 				}
 				content.WriteString("    }\n")
 			}
@@ -132,7 +140,7 @@ func (g *Generator) generateTemplateEntry(sourceEntries []*MenuEntry, snapshots 
 		content.WriteString("    loader   /boot/vmlinuz-linux\n")
 		content.WriteString("    initrd   /boot/initramfs-linux.img\n")
 		if sampleOptions != "" {
-			content.WriteString(fmt.Sprintf("    options  %s\n", sampleOptions))
+			content.WriteString(fmt.Sprintf("    options  %s\n", content.quote(sampleOptions)))
 		}
 		content.WriteString("    \n")
 		content.WriteString("    # Snapshot submenus will be automatically generated below:\n")
@@ -142,10 +150,10 @@ func (g *Generator) generateTemplateEntry(sourceEntries []*MenuEntry, snapshots 
 				break
 			}
 			snapshotTitle := fmt.Sprintf("Arch Linux (%s)", g.getSnapshotDisplayName(snapshot))
-			content.WriteString(fmt.Sprintf("    submenuentry \"%s\" {\n", snapshotTitle))
+			content.WriteString(fmt.Sprintf("    submenuentry %s {\n", content.quote(snapshotTitle)))
 			if sampleOptions != "" {
 				snapshotOptions := g.updateOptionsForSnapshot(sampleOptions, snapshot)
-				content.WriteString(fmt.Sprintf("        options %s\n", snapshotOptions))
+				content.WriteString(fmt.Sprintf("        options %s\n", content.quote(snapshotOptions)))
 			}
 			content.WriteString("    }\n")
 		}
@@ -161,17 +169,17 @@ func (g *Generator) generateTemplateEntry(sourceEntries []*MenuEntry, snapshots 
 	content.WriteString("# 4. Save the file and regenerate to see your customized menu with snapshots\n")
 	content.WriteString("# 5. You can create multiple menuentry blocks for different configurations\n")
 
-	return content.String()
+	return content.result()
 }
 
 // generateFromExistingEntries generates content from existing customized entries
-func (g *Generator) generateFromExistingEntries(existingEntries map[string]*MenuEntry, snapshots []*btrfs.Snapshot, rootFS *btrfs.Filesystem) string {
-	var content strings.Builder
+func (g *Generator) generateFromExistingEntries(existingEntries map[string]*MenuEntry, snapshots []*btrfs.Snapshot, rootFS *btrfs.Filesystem) (string, error) {
+	var content configSerialiser
 
 	if len(existingEntries) == 0 {
 		content.WriteString("# No customized menu entries found.\n")
 		content.WriteString("# Please add menuentry blocks to this file or regenerate to create templates.\n")
-		return content.String()
+		return content.result()
 	}
 
 	titles := make([]string, 0, len(existingEntries))
@@ -188,11 +196,14 @@ func (g *Generator) generateFromExistingEntries(existingEntries map[string]*Menu
 		}
 		first = false
 
-		entryContent := g.generateSingleMenuEntry(title, entry, snapshots, rootFS)
+		entryContent, err := g.generateSingleMenuEntry(title, entry, snapshots, rootFS)
+		if err != nil {
+			return "", err
+		}
 		content.WriteString(entryContent)
 	}
 
-	return content.String()
+	return content.result()
 }
 
 // getBootPlanForSnapshot looks up the first boot plan for a snapshot.
@@ -207,30 +218,30 @@ func (g *Generator) getBootPlanForSnapshot(snapshot *btrfs.Snapshot) *kernel.Boo
 }
 
 // generateSingleMenuEntry generates a single menuentry with snapshots as submenus
-func (g *Generator) generateSingleMenuEntry(title string, templateEntry *MenuEntry, snapshots []*btrfs.Snapshot, rootFS *btrfs.Filesystem) string {
-	var content strings.Builder
+func (g *Generator) generateSingleMenuEntry(title string, templateEntry *MenuEntry, snapshots []*btrfs.Snapshot, rootFS *btrfs.Filesystem) (string, error) {
+	var content configSerialiser
 
-	content.WriteString(fmt.Sprintf("menuentry \"%s\" {\n", title))
+	content.WriteString(fmt.Sprintf("menuentry %s {\n", content.quote(title)))
 
 	if templateEntry.Icon != "" {
-		content.WriteString(fmt.Sprintf("    icon %s\n", templateEntry.Icon))
+		content.WriteString(fmt.Sprintf("    icon %s\n", content.token(templateEntry.Icon)))
 	}
 	if templateEntry.Volume != "" {
-		content.WriteString(fmt.Sprintf("    volume %s\n", templateEntry.Volume))
+		content.WriteString(fmt.Sprintf("    volume %s\n", content.token(templateEntry.Volume)))
 	}
 	if templateEntry.Loader != "" {
-		content.WriteString(fmt.Sprintf("    loader %s\n", templateEntry.Loader))
+		content.WriteString(fmt.Sprintf("    loader %s\n", content.token(templateEntry.Loader)))
 	}
 	for _, initrd := range templateEntry.Initrd {
-		content.WriteString(fmt.Sprintf("    initrd %s\n", initrd))
+		content.WriteString(fmt.Sprintf("    initrd %s\n", content.token(initrd)))
 	}
 	if templateEntry.Options != "" {
-		content.WriteString(fmt.Sprintf("    options %s\n", templateEntry.Options))
+		content.WriteString(fmt.Sprintf("    options %s\n", content.quote(templateEntry.Options)))
 	}
 
 	for _, snapshot := range snapshots {
 		snapshotTitle := fmt.Sprintf("%s (%s)", title, g.getSnapshotDisplayName(snapshot))
-		content.WriteString(fmt.Sprintf("    submenuentry \"%s\" {\n", snapshotTitle))
+		content.WriteString(fmt.Sprintf("    submenuentry %s {\n", content.quote(snapshotTitle)))
 
 		plan := g.getBootPlanForSnapshot(snapshot)
 		g.writeSplitSubmenuBody(&content, plan, templateEntry, snapshot)
@@ -239,24 +250,24 @@ func (g *Generator) generateSingleMenuEntry(title string, templateEntry *MenuEnt
 
 	content.WriteString("}\n")
 
-	return content.String()
+	return content.result()
 }
 
 // writeSplitSubmenuBody handles both Split- and BLS-layout sets: rEFInd
 // doesn't read BLS .conf files, so the emitted shape is identical.
-func (g *Generator) writeSplitSubmenuBody(content *strings.Builder, plan *kernel.BootPlan, templateEntry *MenuEntry, snapshot *btrfs.Snapshot) {
+func (g *Generator) writeSplitSubmenuBody(content *configSerialiser, plan *kernel.BootPlan, templateEntry *MenuEntry, snapshot *btrfs.Snapshot) {
 	if plan != nil && plan.Mode == kernel.BootModeBtrfs {
 		if plan.BtrfsVolume != "" {
-			content.WriteString(fmt.Sprintf("        volume  %s\n", plan.BtrfsVolume))
+			content.WriteString(fmt.Sprintf("        volume  %s\n", content.token(plan.BtrfsVolume)))
 		}
-		content.WriteString(fmt.Sprintf("        loader  %s\n", plan.SnapshotKernel))
+		content.WriteString(fmt.Sprintf("        loader  %s\n", content.token(plan.SnapshotKernel)))
 		for _, initrd := range plan.SnapshotInitrds {
-			content.WriteString(fmt.Sprintf("        initrd  %s\n", initrd))
+			content.WriteString(fmt.Sprintf("        initrd  %s\n", content.token(initrd)))
 		}
 	}
 
 	snapshotOptions := g.updateOptionsForSnapshot(templateEntry.Options, snapshot)
 	if snapshotOptions != "" {
-		content.WriteString(fmt.Sprintf("        options %s\n", snapshotOptions))
+		content.WriteString(fmt.Sprintf("        options %s\n", content.quote(snapshotOptions)))
 	}
 }
