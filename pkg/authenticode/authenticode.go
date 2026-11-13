@@ -3,8 +3,8 @@ package authenticode
 import (
 	"bytes"
 	"crypto"
-	_ "crypto/sha256" // register SHA-256 with the crypto.Hash registry
 	"crypto/rsa"
+	_ "crypto/sha256" // register SHA-256 with the crypto.Hash registry
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
@@ -81,12 +81,9 @@ func (s *Signer) Sign(unsigned []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("authenticode: parse PE: %w", err)
 	}
-	sig, err := bin.Sign(s.key, s.cert)
+	_, err = bin.Sign(s.key, s.cert)
 	if err != nil {
 		return nil, fmt.Errorf("authenticode: sign: %w", err)
-	}
-	if err := bin.AppendSignature(sig); err != nil {
-		return nil, fmt.Errorf("authenticode: attach signature: %w", err)
 	}
 	return bin.Bytes(), nil
 }
@@ -210,4 +207,3 @@ func isEncryptedPEM(block *pem.Block) bool {
 	}
 	return block.Type == "ENCRYPTED PRIVATE KEY"
 }
-

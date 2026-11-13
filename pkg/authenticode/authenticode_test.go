@@ -2,6 +2,7 @@ package authenticode
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	goauth "github.com/foxboron/go-uefi/authenticode"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -199,4 +201,51 @@ func TestVerify_RejectsUnsigned(t *testing.T) {
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNoValidSignature),
 		"unsigned input must produce ErrNoValidSignature, got: %v", err)
+}
+
+// A valid signature must not become valid for another image by replacing the
+// image digest inside its unsigned ContentInfo. The authenticated attributes
+// still bind it to the original image.
+func TestVerify_RejectsForgedImageDigest(t *testing.T) {
+	keyPEM, certPEM := generateFixture(t, "original signer")
+	signer, err := NewSignerFromPEM(keyPEM, certPEM)
+	require.NoError(t, err)
+	original, err := goauth.Parse(bytes.NewReader(loadFixturePE(t)))
+	require.NoError(t, err)
+	signature, err := original.Sign(signer.key, signer.cert)
+	require.NoError(t, err)
+
+	otherPE, err := os.ReadFile(filepath.Join("..", "uki", "testdata", "uki-multi-profile.efi"))
+	require.NoError(t, err)
+	other, err := goauth.Parse(bytes.NewReader(otherPE))
+	require.NoError(t, err)
+	originalDigest := original.Hash(crypto.SHA256)
+	otherDigest := other.Hash(crypto.SHA256)
+	require.NotEqual(t, originalDigest, otherDigest)
+
+	forged := bytes.Replace(signature, originalDigest, otherDigest, 1)
+	require.NotEqual(t, signature, forged, "fixture must replace the embedded image digest")
+	require.NoError(t, other.AppendSignature(forged))
+	require.ErrorIs(t, Verify(other.Bytes(), []*x509.Certificate{signer.cert}), ErrNoValidSignature)
+}
+
+func TestSign_AppendsSignaturePreservingExistingSigner(t *testing.T) {
+	firstKey, firstCert := generateFixture(t, "first")
+	first, err := NewSignerFromPEM(firstKey, firstCert)
+	require.NoError(t, err)
+	secondKey, secondCert := generateFixture(t, "second")
+	second, err := NewSignerFromPEM(secondKey, secondCert)
+	require.NoError(t, err)
+
+	signed, err := first.Sign(loadFixturePE(t))
+	require.NoError(t, err)
+	twiceSigned, err := second.Sign(signed)
+	require.NoError(t, err)
+	require.NoError(t, Verify(twiceSigned, []*x509.Certificate{first.cert}))
+	require.NoError(t, Verify(twiceSigned, []*x509.Certificate{second.cert}))
+	parsed, err := goauth.Parse(bytes.NewReader(twiceSigned))
+	require.NoError(t, err)
+	signatures, err := parsed.Signatures()
+	require.NoError(t, err)
+	require.Len(t, signatures, 2)
 }
