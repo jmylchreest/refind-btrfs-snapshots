@@ -10,6 +10,7 @@ import (
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/runner"
 	"github.com/rs/zerolog/log"
+	"golang.org/x/sys/unix"
 )
 
 // MakeSnapshotWritable changes a snapshot's read-only property to false
@@ -54,42 +55,91 @@ func (m *Manager) CreateWritableSnapshot(snapshot *Snapshot, destDir string, r r
 		return nil, fmt.Errorf("invalid snapshot provided")
 	}
 
+	if !filepath.IsAbs(snapshot.FilesystemPath) {
+		return nil, fmt.Errorf("snapshot filesystem path must be absolute: %q", snapshot.FilesystemPath)
+	}
+	if snapshot.UUID == "" || snapshot.UUID == "-" {
+		return nil, fmt.Errorf("snapshot UUID is missing")
+	}
+
 	formattedTime := FormatSnapshotTimeForRwsnap(snapshot.SnapshotTime, m.rwsnapFormat, m.useLocalTime)
 	snapshotName := fmt.Sprintf("rwsnap_%s_ID%d", formattedTime, snapshot.ID)
-	destPath := filepath.Join(destDir, snapshotName)
+	destPath, err := filepath.Abs(filepath.Join(destDir, snapshotName))
+	if err != nil {
+		return nil, err
+	}
+
+	// Preserve Snapper metadata without aliasing the source's Subvolume.
+	writable := *snapshot
+	writable.OriginalPath = snapshot.Path
+	writable.FilesystemPath = destPath
+	writable.PlannedFilesystemPath = ""
+
+	if info, err := os.Lstat(destPath); err == nil {
+		if !info.IsDir() {
+			return nil, fmt.Errorf("snapshot destination is not a directory: %s", destPath)
+		}
+		existing, err := m.getSubvolumeInfo(destPath)
+		if err != nil {
+			return nil, fmt.Errorf("invalid existing snapshot destination %s: %w", destPath, err)
+		}
+		if existing.ParentUUID != snapshot.UUID || existing.IsReadOnly {
+			return nil, fmt.Errorf("destination %s is not a writable snapshot of source UUID %s", destPath, snapshot.UUID)
+		}
+		writable.Subvolume = existing
+		return &writable, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("failed to inspect snapshot destination: %w", err)
+	}
 
 	if err := r.MkdirAll(destDir, 0755, fmt.Sprintf("Create writable snapshot directory: %s", destDir)); err != nil {
 		return nil, fmt.Errorf("failed to create destination directory: %w", err)
 	}
-
-	err := r.Command("btrfs", []string{"subvolume", "snapshot", snapshot.Path, destPath},
-		fmt.Sprintf("Create writable snapshot: %s -> %s", snapshot.Path, destPath))
-	if err != nil {
+	// Snapshot into a private directory and publish without replacing anything.
+	// An existence check alone races: btrfs snapshots *inside* an existing directory.
+	copyPath := destPath
+	if !r.IsDryRun() {
+		stage, err := os.MkdirTemp(filepath.Dir(destPath), ".rwsnap-")
+		if err != nil {
+			return nil, fmt.Errorf("failed to create staging directory: %w", err)
+		}
+		copyPath = filepath.Join(stage, "snapshot")
+		defer func() {
+			if _, err := os.Lstat(copyPath); err == nil {
+				if err := r.Command("btrfs", []string{"subvolume", "delete", copyPath}, "Remove unpublished writable snapshot"); err != nil {
+					log.Warn().Err(err).Str("path", copyPath).Msg("Failed to remove unpublished snapshot")
+				}
+			}
+			if err := os.Remove(stage); err != nil {
+				log.Warn().Err(err).Str("path", stage).Msg("Failed to remove staging directory")
+			}
+		}()
+	}
+	if err := r.Command("btrfs", []string{"subvolume", "snapshot", snapshot.FilesystemPath, copyPath},
+		fmt.Sprintf("Create writable snapshot: %s -> %s", snapshot.FilesystemPath, destPath)); err != nil {
 		return nil, fmt.Errorf("failed to create writable snapshot: %w", err)
 	}
 
 	if r.IsDryRun() {
-		writable := &Snapshot{
-			Subvolume:    snapshot.Subvolume,
-			OriginalPath: snapshot.Path,
-			SnapshotTime: snapshot.SnapshotTime,
+		path, err := plannedSubvolumePath(destPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve planned snapshot path: %w", err)
 		}
-		writable.Path = destPath
-		return writable, nil
+		// The new ID is unknowable until creation. Plan by path only, reading
+		// the source's files while targeting writes at the future copy.
+		writable.Subvolume = &Subvolume{Path: path, ParentUUID: snapshot.UUID, IsSnapshot: true}
+		writable.FilesystemPath = snapshot.FilesystemPath
+		writable.PlannedFilesystemPath = destPath
+	} else {
+		if err := unix.Renameat2(unix.AT_FDCWD, copyPath, unix.AT_FDCWD, destPath, unix.RENAME_NOREPLACE); err != nil {
+			return nil, fmt.Errorf("failed to publish writable snapshot at %s: %w", destPath, err)
+		}
+		writable.Subvolume, err = m.getSubvolumeInfo(destPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get new snapshot info: %w", err)
+		}
 	}
-
-	newSnapshot, err := m.getSubvolumeInfo(destPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get new snapshot info: %w", err)
-	}
-
-	writable := &Snapshot{
-		Subvolume:    newSnapshot,
-		OriginalPath: snapshot.Path,
-		SnapshotTime: snapshot.SnapshotTime,
-	}
-
-	return writable, nil
+	return &writable, nil
 }
 
 // GetSnapshotFstabPath returns the path to the fstab file in a snapshot
@@ -257,6 +307,10 @@ func (m *Manager) looksLikeSnapshot(subvol *Subvolume) bool {
 func (m *Manager) CleanupOldSnapshots(destDir string, keepCount int, r runner.Runner) error {
 	if keepCount < 0 {
 		return fmt.Errorf("keepCount must be non-negative")
+	}
+
+	if keepCount == 0 {
+		return nil
 	}
 
 	log.Debug().Str("dest_dir", destDir).Int("keep_count", keepCount).Msg("Cleaning up old snapshots")

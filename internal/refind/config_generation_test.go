@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
+	"github.com/jmylchreest/refind-btrfs-snapshots/internal/fstab"
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/kernel"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,14 +23,14 @@ func TestGenerateManagedConfigDiff_NewFile_GeneratesTemplate(t *testing.T) {
 		{
 			Subvolume: &btrfs.Subvolume{
 				ID:   101,
-				Path: "/.snapshots/101/snapshot",
+				Path: "@/.snapshots/101/snapshot",
 			},
 			SnapshotTime: now.Add(-1 * time.Hour),
 		},
 		{
 			Subvolume: &btrfs.Subvolume{
 				ID:   100,
-				Path: "/.snapshots/100/snapshot",
+				Path: "@/.snapshots/100/snapshot",
 			},
 			SnapshotTime: now.Add(-2 * time.Hour),
 		},
@@ -91,7 +92,7 @@ func TestGenerateManagedConfigDiff_ExistingFile_PreservesCustomizations(t *testi
 		{
 			Subvolume: &btrfs.Subvolume{
 				ID:   101,
-				Path: "/.snapshots/101/snapshot",
+				Path: "@/.snapshots/101/snapshot",
 			},
 			SnapshotTime: now.Add(-1 * time.Hour),
 		},
@@ -382,7 +383,7 @@ func TestGenerateSingleMenuEntry(t *testing.T) {
 		{
 			Subvolume: &btrfs.Subvolume{
 				ID:   101,
-				Path: "/.snapshots/101/snapshot",
+				Path: "@/.snapshots/101/snapshot",
 			},
 			SnapshotTime: time.Date(2025, 6, 12, 7, 0, 18, 0, time.UTC),
 		},
@@ -453,7 +454,7 @@ func TestUpdateOptionsForSnapshot_AvoidDoubleAt(t *testing.T) {
 	snapshot := &btrfs.Snapshot{
 		Subvolume: &btrfs.Subvolume{
 			ID:   101,
-			Path: "/.snapshots/101/snapshot", // Path without @
+			Path: "/.snapshots/101/snapshot", // Snapshot at the filesystem top level
 		},
 	}
 
@@ -466,9 +467,9 @@ func TestUpdateOptionsForSnapshot_AvoidDoubleAt(t *testing.T) {
 
 	originalOptions := "quiet rw rootflags=subvol=@ root=UUID=test-uuid"
 
-	// Test normal case: path without @
+	// A top-level path must not acquire an invented @ prefix.
 	result1 := generator.updateOptionsForSnapshot(originalOptions, snapshot)
-	assert.Contains(t, result1, "rootflags=subvol=@/.snapshots/101/snapshot")
+	assert.Contains(t, result1, "rootflags=subvol=.snapshots/101/snapshot")
 	assert.NotContains(t, result1, "@@") // Should not have double @
 
 	// Test case where path already has @: should not get double @
@@ -538,7 +539,7 @@ func TestGenerateSingleMenuEntry_MultipleInitrdDirectives(t *testing.T) {
 		{
 			Subvolume: &btrfs.Subvolume{
 				ID:   101,
-				Path: "/.snapshots/101/snapshot",
+				Path: "@/.snapshots/101/snapshot",
 			},
 			SnapshotTime: time.Date(2025, 6, 12, 7, 0, 18, 0, time.UTC),
 		},
@@ -990,7 +991,7 @@ func TestUpdateRefindLinuxConfWithAllEntries_WithSnapshots_WritesMarkers(t *test
 		{
 			Subvolume: &btrfs.Subvolume{
 				ID:   101,
-				Path: "/.snapshots/101/snapshot",
+				Path: "@/.snapshots/101/snapshot",
 			},
 			SnapshotTime: now.Add(-1 * time.Hour),
 		},
@@ -1011,4 +1012,35 @@ func TestUpdateRefindLinuxConfWithAllEntries_WithSnapshots_WritesMarkers(t *test
 	assert.Contains(t, content, "##refind-btrfs-snapshots-start")
 	assert.Contains(t, content, "##refind-btrfs-snapshots-end")
 	assert.Contains(t, content, ".snapshots/101/snapshot")
+}
+
+func TestPlannedCopyGeneratesBtrfsSubmenu(t *testing.T) {
+	source := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(source, "etc"), 0755))
+	require.NoError(t, os.MkdirAll(filepath.Join(source, "boot"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(source, "etc", "fstab"), []byte("UUID=test / btrfs subvol=@,subvolid=256 0 0\n"), 0644))
+	for _, name := range []string{"vmlinuz-linux", "initramfs-linux.img"} {
+		require.NoError(t, os.WriteFile(filepath.Join(source, "boot", name), []byte("kernel fixture"), 0644))
+	}
+	snapshot := &btrfs.Snapshot{
+		Subvolume:             &btrfs.Subvolume{Path: "@/.copies/rwsnap_test"},
+		FilesystemPath:        source,
+		PlannedFilesystemPath: "/.copies/rwsnap_test",
+	}
+	root := &btrfs.Filesystem{UUID: "test", Label: "ROOT"}
+	plans := kernel.NewPlanner(fstab.NewManager(), nil, nil, root).Plan([]*btrfs.Snapshot{snapshot})
+	require.Len(t, plans, 1, "source files must remain discoverable before the copy exists")
+	require.Equal(t, kernel.BootModeBtrfs, plans[0].Mode)
+	g := NewGeneratorWithBootPlans("/esp", "2006-01-02", false, nil, nil, plans)
+	content, err := g.generateSingleMenuEntry("Linux", &MenuEntry{
+		Loader:  "/boot/vmlinuz-linux",
+		Options: "root=UUID=test rootflags=subvol=/@ rw",
+	}, []*btrfs.Snapshot{snapshot}, root)
+	require.NoError(t, err)
+	assert.Contains(t, content, "submenuentry")
+	assert.Contains(t, content, "loader  /@/.copies/rwsnap_test/boot/vmlinuz-linux")
+	assert.Contains(t, content, "initrd  /@/.copies/rwsnap_test/boot/initramfs-linux.img")
+	assert.Contains(t, content, "rootflags=subvol=/@/.copies/rwsnap_test")
+	assert.NotContains(t, content, "subvolid=")
+	assert.NotContains(t, content, source)
 }

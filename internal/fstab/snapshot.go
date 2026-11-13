@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/btrfs"
@@ -57,6 +58,10 @@ func (m *Manager) UpdateSnapshotFstabDiff(snapshot *btrfs.Snapshot, rootFS *btrf
 		return nil, fmt.Errorf("failed to generate fstab content: %w", err)
 	}
 
+	if snapshot.PlannedFilesystemPath != "" {
+		fstabPath = filepath.Join(snapshot.PlannedFilesystemPath, "etc", "fstab")
+	}
+
 	return &diff.FileDiff{
 		Path:     fstabPath,
 		Original: string(originalContent),
@@ -108,6 +113,9 @@ func (m *Manager) updateSubvolOption(options, newSubvol string) string {
 // updateSubvolidOption updates the subvolid option in mount options
 func (m *Manager) updateSubvolidOption(options string, newSubvolid uint64) string {
 	parser := params.NewCommaParameterParser()
+	if newSubvolid == 0 {
+		return parser.Remove(options, "subvolid")
+	}
 	return parser.Update(options, "subvolid", fmt.Sprintf("%d", newSubvolid))
 }
 

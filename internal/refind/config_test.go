@@ -342,9 +342,9 @@ func TestUpdateOptionsForSnapshot_SubvolumeFormatPreservation(t *testing.T) {
 	snapshot := &btrfs.Snapshot{
 		Subvolume: &btrfs.Subvolume{
 			ID:   275,
-			Path: "/.snapshots/8/snapshot",
+			Path: "@/.snapshots/8/snapshot",
 		},
-		OriginalPath:   "/.snapshots/8/snapshot", 
+		OriginalPath:   "/.snapshots/8/snapshot",
 		FilesystemPath: "/.snapshots/8/snapshot",
 		SnapshotTime:   testTime,
 	}
@@ -362,14 +362,14 @@ func TestUpdateOptionsForSnapshot_SubvolumeFormatPreservation(t *testing.T) {
 			description:     "Should preserve @ format when original uses @",
 		},
 		{
-			name:            "preserve_/@_format", 
+			name:            "preserve_/@_format",
 			originalOptions: "quiet splash rw rootflags=subvol=/@ cryptdevice=UUID=test:luks root=/dev/mapper/luks",
 			expectedSubvol:  "/@/.snapshots/8/snapshot",
 			description:     "Should preserve /@ format when original uses /@",
 		},
 		{
 			name:            "handle_@_subpath_format",
-			originalOptions: "quiet splash rw rootflags=subvol=@/home cryptdevice=UUID=test:luks root=/dev/mapper/luks", 
+			originalOptions: "quiet splash rw rootflags=subvol=@/home cryptdevice=UUID=test:luks root=/dev/mapper/luks",
 			expectedSubvol:  "@/.snapshots/8/snapshot",
 			description:     "Should use @ format when original uses @/subpath",
 		},
@@ -382,7 +382,7 @@ func TestUpdateOptionsForSnapshot_SubvolumeFormatPreservation(t *testing.T) {
 		{
 			name:            "fallback_no_subvol",
 			originalOptions: "quiet splash rw rootflags=compress=zstd cryptdevice=UUID=test:luks root=/dev/mapper/luks",
-			expectedSubvol:  "@/.snapshots/8/snapshot", 
+			expectedSubvol:  "@/.snapshots/8/snapshot",
 			description:     "Should use @ format as fallback when rootflags has no subvol",
 		},
 	}
@@ -403,5 +403,13 @@ func TestUpdateOptionsForSnapshot_SubvolumeFormatPreservation(t *testing.T) {
 			actualSubvolID := parser.ExtractSubvolID(rootflags)
 			assert.Equal(t, "275", actualSubvolID, "Subvolid should be updated to snapshot ID")
 		})
+	}
+}
+
+func TestPlannedCopyOptions(t *testing.T) {
+	for _, path := range []string{"@/.copies/new", "copies/new", "@home/copies/new"} {
+		s := &btrfs.Snapshot{Subvolume: &btrfs.Subvolume{Path: path}}
+		got := (&Generator{}).updateOptionsForSnapshot("root=UUID=test rootflags=subvol=/@,subvolid=256 rw", s)
+		assert.Equal(t, "root=UUID=test rootflags=subvol=/"+path+" rw", got)
 	}
 }

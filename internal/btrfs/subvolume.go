@@ -57,6 +57,10 @@ func (m *Manager) parseSubvolumeShow(output string) (*Subvolume, error) {
 		value := strings.TrimSpace(parts[1])
 
 		switch key {
+		case "UUID":
+			subvol.UUID = value
+		case "Parent UUID":
+			subvol.ParentUUID = value
 		case "Name":
 			if subvol.Path == "" {
 				subvol.Path = value
