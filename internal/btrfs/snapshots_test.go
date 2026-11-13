@@ -1,6 +1,8 @@
 package btrfs
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,50 +15,38 @@ import (
 
 // Stub only the external command boundary; test the production path, metadata,
 // validation, and reuse logic on ordinary temporary directories in normal CI.
-func copyFixture(t *testing.T) (*Manager, *Snapshot, string, string) {
+func copyFixture(t *testing.T) (*Manager, *Snapshot, string, string, *copyTestRunner) {
 	t.Helper()
 	dir := t.TempDir()
 	source := filepath.Join(dir, "source")
 	dest := filepath.Join(dir, "copies")
 	require.NoError(t, os.MkdirAll(filepath.Join(source, "etc"), 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(source, "etc", "fstab"), []byte("fstab"), 0644))
-	bin := t.TempDir()
-	script := `#!/bin/sh
-set -eu
-case "$1 $2" in
- 'subvolume snapshot')
-  [ "$3" = "$COPY_SOURCE" ] || exit 1
-  [ ! -e "$4" ] || exit 1
-  cp -R "$3" "$4"
-  printf '%s\n' 'Flags: -' 'Parent UUID: source-uuid' > "$4/.subvolume"
-  ;;
- 'subvolume delete')
-  rm -r "$3"
-  ;;
- 'subvolume show')
-  [ -f "$3/.subvolume" ] || exit 1
-  printf '%s\n' '@/.copies/test' 'Subvolume ID: 200' 'UUID: copy-uuid'
-  cat "$3/.subvolume"
-  ;;
- *) exit 1;;
-esac
-`
-	require.NoError(t, os.WriteFile(filepath.Join(bin, "btrfs"), []byte(script), 0755))
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("COPY_SOURCE", source)
 	src := &Snapshot{
 		Subvolume:      &Subvolume{ID: 100, UUID: "source-uuid", Path: "@/.snapshots/1/snapshot", IsReadOnly: true},
 		FilesystemPath: source, SnapshotTime: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
 		Description: "before update", SnapperNum: 1, SnapperType: "pre",
 	}
-	return NewManager(nil, 0, "", false), src, dest, filepath.Join(dest, "rwsnap_2026-01-02_03-04-05_ID100")
+	m := NewManager(nil, 0, "", false)
+	m.readSubvolumeInfo = func(path string) (*Subvolume, error) {
+		data, err := os.ReadFile(filepath.Join(path, ".subvolume"))
+		if err != nil {
+			return nil, err
+		}
+		var subvol Subvolume
+		if err := json.Unmarshal(data, &subvol); err != nil {
+			return nil, err
+		}
+		return &subvol, nil
+	}
+	return m, src, dest, filepath.Join(dest, "rwsnap_2026-01-02_03-04-05_ID100"), &copyTestRunner{source: source}
 }
 
 func TestWritableCopyCreationAndReuse(t *testing.T) {
-	m, src, dest, target := copyFixture(t)
+	m, src, dest, target, r := copyFixture(t)
 	before := *src.Subvolume
 	for i := 0; i < 2; i++ {
-		got, err := m.CreateWritableSnapshot(src, dest, &runner.RealRunner{})
+		got, err := m.CreateWritableSnapshot(src, dest, r)
 		require.NoError(t, err)
 		assert.Equal(t, target, got.FilesystemPath)
 		assert.Equal(t, src.Path, got.OriginalPath)
@@ -80,7 +70,7 @@ func TestWritableCopyCreationAndReuse(t *testing.T) {
 func TestWritableCopyRejectsInvalidDestination(t *testing.T) {
 	for _, kind := range []string{"directory", "file", "symlink", "dangling symlink", "unrelated", "readonly"} {
 		t.Run(kind, func(t *testing.T) {
-			m, src, dest, target := copyFixture(t)
+			m, src, dest, target, r := copyFixture(t)
 			require.NoError(t, os.MkdirAll(dest, 0755))
 			switch kind {
 			case "file":
@@ -92,13 +82,13 @@ func TestWritableCopyRejectsInvalidDestination(t *testing.T) {
 			default:
 				require.NoError(t, os.Mkdir(target, 0755))
 				if kind == "unrelated" {
-					require.NoError(t, os.WriteFile(filepath.Join(target, ".subvolume"), []byte("Parent UUID: other\nFlags: -\n"), 0644))
+					require.NoError(t, writeCopyTestMetadata(target, &Subvolume{ParentUUID: "other"}))
 				}
 				if kind == "readonly" {
-					require.NoError(t, os.WriteFile(filepath.Join(target, ".subvolume"), []byte("Parent UUID: source-uuid\nFlags: readonly\n"), 0644))
+					require.NoError(t, writeCopyTestMetadata(target, &Subvolume{ParentUUID: "source-uuid", IsReadOnly: true}))
 				}
 			}
-			_, err := m.CreateWritableSnapshot(src, dest, &runner.RealRunner{})
+			_, err := m.CreateWritableSnapshot(src, dest, r)
 			require.Error(t, err)
 			_, err = os.Stat(filepath.Join(target, "source"))
 			assert.True(t, os.IsNotExist(err) || kind == "file")
@@ -107,7 +97,7 @@ func TestWritableCopyRejectsInvalidDestination(t *testing.T) {
 }
 
 func TestWritableCopyRequiresMountedPathAndUUID(t *testing.T) {
-	m, src, dest, _ := copyFixture(t)
+	m, src, dest, _, _ := copyFixture(t)
 	src.FilesystemPath = ""
 	_, err := m.CreateWritableSnapshot(src, dest, &runner.DryRunner{})
 	require.Error(t, err)
@@ -126,24 +116,64 @@ func TestCleanupZeroDoesNotInspectDestination(t *testing.T) {
 	require.Error(t, m.CleanupOldSnapshots(path, -1, &runner.RealRunner{}))
 }
 
-// Simulate another process creating the final destination after the initial
-// existence check but before the snapshot command completes.
-type racingCopyRunner struct {
+// copyTestRunner implements only the two mutations exercised by these tests.
+// Files and rename publication remain real; no subprocess or PATH override is used.
+type copyTestRunner struct {
 	runner.RealRunner
-	target string
+	source         string
+	beforeSnapshot func() error
 }
 
-func (r *racingCopyRunner) Command(name string, args []string, desc string) error {
-	if len(args) > 1 && args[1] == "snapshot" {
-		if err := os.Mkdir(r.target, 0755); err != nil {
+func writeCopyTestMetadata(path string, subvol *Subvolume) error {
+	data, err := json.Marshal(subvol)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(path, ".subvolume"), data, 0644)
+}
+
+func (r *copyTestRunner) Command(name string, args []string, _ string) error {
+	if name != "btrfs" || len(args) < 3 || args[0] != "subvolume" {
+		return fmt.Errorf("unexpected command: %s %v", name, args)
+	}
+	switch args[1] {
+	case "snapshot":
+		if len(args) != 4 || args[2] != r.source {
+			return fmt.Errorf("unexpected snapshot arguments: %v", args)
+		}
+		if r.beforeSnapshot != nil {
+			if err := r.beforeSnapshot(); err != nil {
+				return err
+			}
+		}
+		// Reproduce Btrfs's existing-directory behavior so a nesting regression
+		// is detected by the assertions, rather than rejected by the fake itself.
+		target := args[3]
+		if info, err := os.Stat(target); err == nil && info.IsDir() {
+			target = filepath.Join(target, filepath.Base(r.source))
+		}
+		if err := os.Mkdir(target, 0755); err != nil {
 			return err
 		}
+		if err := os.CopyFS(target, os.DirFS(r.source)); err != nil {
+			return err
+		}
+		return writeCopyTestMetadata(target, &Subvolume{ID: 200, UUID: "copy-uuid", ParentUUID: "source-uuid", Path: "@/.copies/test"})
+	case "delete":
+		if len(args) != 3 {
+			return fmt.Errorf("unexpected delete arguments: %v", args)
+		}
+		return os.RemoveAll(args[2])
+	default:
+		return fmt.Errorf("unexpected subvolume operation: %v", args)
 	}
-	return r.RealRunner.Command(name, args, desc)
 }
+
 func TestWritableCopyDoesNotOverwriteConcurrentDestination(t *testing.T) {
-	m, src, dest, target := copyFixture(t)
-	_, err := m.CreateWritableSnapshot(src, dest, &racingCopyRunner{target: target})
+	m, src, dest, target, r := copyFixture(t)
+	// Another process creates the final destination after the initial check.
+	r.beforeSnapshot = func() error { return os.Mkdir(target, 0755) }
+	_, err := m.CreateWritableSnapshot(src, dest, r)
 	require.Error(t, err)
 	entries, err := os.ReadDir(target)
 	require.NoError(t, err)
@@ -155,13 +185,13 @@ func TestWritableCopyDoesNotOverwriteConcurrentDestination(t *testing.T) {
 }
 
 func TestCleanupPositiveCountStillRemovesOlderCopies(t *testing.T) {
-	m, src, dest, older := copyFixture(t)
-	_, err := m.CreateWritableSnapshot(src, dest, &runner.RealRunner{})
+	m, src, dest, older, r := copyFixture(t)
+	_, err := m.CreateWritableSnapshot(src, dest, r)
 	require.NoError(t, err)
 	src.SnapshotTime = src.SnapshotTime.Add(time.Hour)
-	newer, err := m.CreateWritableSnapshot(src, dest, &runner.RealRunner{})
+	newer, err := m.CreateWritableSnapshot(src, dest, r)
 	require.NoError(t, err)
-	require.NoError(t, m.CleanupOldSnapshots(dest, 1, &runner.RealRunner{}))
+	require.NoError(t, m.CleanupOldSnapshots(dest, 1, r))
 	_, err = os.Stat(older)
 	assert.True(t, os.IsNotExist(err))
 	_, err = os.Stat(GetSnapshotFstabPath(newer))

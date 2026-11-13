@@ -14,51 +14,38 @@ import (
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/runner"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 )
 
-// These opt-in regression tests exercise real Btrfs snapshot operations.
-// They create tiny real Btrfs subvolumes in the checkout. Only `subvolume show`
-// is shimmed: this environment denies its B-tree search ioctl. IDs come from
-// real `inspect-internal rootid`; reported top-level paths are synthetic.
-// Run only on Btrfs: go test -tags btrfs_integration ./internal/btrfs -run TestWritableCopyIntegration -v
+// These opt-in tests use unmodified btrfs-progs and real subvolume metadata.
+// Run on Btrfs with permission to inspect/create subvolumes:
+// go test -tags btrfs_integration ./internal/btrfs -run TestWritableCopyIntegration -v
 func writableCopyIntegrationFixture(t *testing.T) (*Manager, *Snapshot, string) {
 	t.Helper()
+	if _, err := exec.LookPath("btrfs"); err != nil {
+		t.Skip("requires btrfs-progs")
+	}
+	var stat unix.Statfs_t
+	require.NoError(t, unix.Statfs(".", &stat))
+	if stat.Type != unix.BTRFS_SUPER_MAGIC {
+		t.Skip("requires a checkout on Btrfs")
+	}
 	dir, err := os.MkdirTemp(".", ".btrfs-copy-test-")
+	if os.IsPermission(err) {
+		t.Skipf("requires a writable checkout: %v", err)
+	}
 	require.NoError(t, err)
 	dir, err = filepath.Abs(dir)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, os.RemoveAll(dir)) })
-	// findmnt provides an independent oracle for the mounted subvolume prefix.
-	root, err := exec.Command("findmnt", "-n", "-o", "FSROOT", "-T", dir).Output()
-	require.NoError(t, err)
-	mount, err := exec.Command("findmnt", "-n", "-o", "TARGET", "-T", dir).Output()
-	require.NoError(t, err)
-	t.Setenv("BTRFS_COPY_TEST_ROOT", strings.TrimSpace(string(root)))
-	t.Setenv("BTRFS_COPY_TEST_MOUNT", strings.TrimSpace(string(mount)))
-	bin := t.TempDir()
-	shim := `#!/bin/sh
-if [ "$1" = subvolume ] && [ "$2" = show ]; then
- id=$(/usr/bin/btrfs inspect-internal rootid "$3") || exit 1
- path="$BTRFS_COPY_TEST_ROOT${3#"$BTRFS_COPY_TEST_MOUNT"}"
- printf '%s\nSubvolume ID: %s\nUUID: test-%s\nParent UUID: %s\n' "${path#/}" "$id" "$id" "$(cat "$3/.copy-test-parent" 2>/dev/null || printf '-')"
- /usr/bin/btrfs property get "$3" ro | sed 's/ro=true/Flags: readonly/; s/ro=false/Flags: -/'
-elif [ "$1" = subvolume ] && [ "$2" = snapshot ]; then
- id=$(/usr/bin/btrfs inspect-internal rootid "$3") || exit 1
- /usr/bin/btrfs "$@" || exit 1
- printf 'test-%s' "$id" > "$4/.copy-test-parent"
-else
- exec /usr/bin/btrfs "$@"
-fi
-`
-	require.NoError(t, os.WriteFile(filepath.Join(bin, "btrfs"), []byte(shim), 0755))
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	src := filepath.Join(dir, "snapshot")
-	out, err := exec.Command("btrfs", "subvolume", "create", src).CombinedOutput()
-	require.NoError(t, err, "%s", out)
+	requireBtrfsIntegrationPrerequisite(t, "subvolume", "create", src)
+	// Check actual kernel permissions before exercising production code. Only
+	// environment permission errors skip; unexpected command failures fail.
+	requireBtrfsIntegrationPrerequisite(t, "subvolume", "show", src)
 	require.NoError(t, os.MkdirAll(filepath.Join(src, "etc"), 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(src, "etc", "fstab"), []byte("UUID=test / btrfs subvol=@ 0 0\n"), 0644))
-	out, err = exec.Command("btrfs", "property", "set", src, "ro", "true").CombinedOutput()
-	require.NoError(t, err, "%s", out)
+	requireBtrfsIntegrationPrerequisite(t, "property", "set", src, "ro", "true")
 	t.Cleanup(func() {
 		out, err := exec.Command("btrfs", "property", "set", src, "ro", "false").CombinedOutput()
 		require.NoError(t, err, "%s", out)
@@ -69,6 +56,17 @@ fi
 	return m, &Snapshot{Subvolume: sv, FilesystemPath: src, SnapshotTime: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)}, filepath.Join(dir, "copies")
 }
 
+func requireBtrfsIntegrationPrerequisite(t *testing.T, args ...string) {
+	t.Helper()
+	cmd := exec.Command("btrfs", args...)
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	output, err := cmd.CombinedOutput()
+	if err != nil && (strings.Contains(string(output), "Operation not permitted") || strings.Contains(string(output), "Permission denied")) {
+		t.Skipf("requires Btrfs permissions for %v: %s", args, output)
+	}
+	require.NoError(t, err, "%s", output)
+}
+
 func TestWritableCopyIntegrationMountedSource(t *testing.T) {
 	m, src, dest := writableCopyIntegrationFixture(t)
 	_, err := m.CreateWritableSnapshot(src, dest, &runner.RealRunner{})
@@ -77,8 +75,6 @@ func TestWritableCopyIntegrationMountedSource(t *testing.T) {
 
 func TestWritableCopyIntegrationCopyFilesystemPath(t *testing.T) {
 	m, src, dest := writableCopyIntegrationFixture(t)
-	// Isolate subsequent bugs by letting the old implementation find its source.
-	src.Path = src.FilesystemPath
 	copy, err := m.CreateWritableSnapshot(src, dest, &runner.RealRunner{})
 	require.NoError(t, err)
 	assert.NotEmpty(t, copy.FilesystemPath)
@@ -88,7 +84,6 @@ func TestWritableCopyIntegrationCopyFilesystemPath(t *testing.T) {
 
 func TestWritableCopyIntegrationRerun(t *testing.T) {
 	m, src, dest := writableCopyIntegrationFixture(t)
-	src.Path = src.FilesystemPath
 	first, err := m.CreateWritableSnapshot(src, dest, &runner.RealRunner{})
 	require.NoError(t, err)
 	second, err := m.CreateWritableSnapshot(src, dest, &runner.RealRunner{})
@@ -112,7 +107,7 @@ func TestWritableCopyIntegrationDryRunDoesNotMutateSource(t *testing.T) {
 	assert.Zero(t, copy.ID)
 	assert.False(t, copy.IsReadOnly)
 	assert.Equal(t, dest+"/rwsnap_2026-01-02_03-04-05_ID"+strconv.FormatUint(src.ID, 10), copy.PlannedFilesystemPath)
-	assert.Equal(t, strings.TrimPrefix(filepath.Join(os.Getenv("BTRFS_COPY_TEST_ROOT"), strings.TrimPrefix(copy.PlannedFilesystemPath, os.Getenv("BTRFS_COPY_TEST_MOUNT"))), "/"), copy.Path, "planned boot path must retain the top-level subvolume prefix")
+	assert.Equal(t, filepath.Join(filepath.Dir(original.Path), "copies", filepath.Base(copy.PlannedFilesystemPath)), copy.Path, "planned boot path must retain the top-level subvolume prefix")
 	_, err = os.Stat(dest)
 	assert.True(t, os.IsNotExist(err))
 }
@@ -129,7 +124,6 @@ func (r *writableCopyIntegrationRecorder) Command(_ string, args []string, _ str
 
 func TestWritableCopyIntegrationCleanupZeroKeepsAll(t *testing.T) {
 	m, src, dest := writableCopyIntegrationFixture(t)
-	src.Path = src.FilesystemPath
 	_, err := m.CreateWritableSnapshot(src, dest, &runner.RealRunner{})
 	require.NoError(t, err)
 	r := &writableCopyIntegrationRecorder{}
@@ -139,7 +133,6 @@ func TestWritableCopyIntegrationCleanupZeroKeepsAll(t *testing.T) {
 
 func TestWritableCopyIntegrationRejectUnrelatedExistingSubvolume(t *testing.T) {
 	m, src, dest := writableCopyIntegrationFixture(t)
-	src.Path = src.FilesystemPath
 	require.NoError(t, os.MkdirAll(dest, 0755))
 	target := filepath.Join(dest, "rwsnap_2026-01-02_03-04-05_ID"+strconv.FormatUint(src.ID, 10))
 	out, err := exec.Command("btrfs", "subvolume", "create", target).CombinedOutput()
@@ -150,7 +143,6 @@ func TestWritableCopyIntegrationRejectUnrelatedExistingSubvolume(t *testing.T) {
 
 func TestWritableCopyIntegrationRejectReadOnlyExistingCopy(t *testing.T) {
 	m, src, dest := writableCopyIntegrationFixture(t)
-	src.Path = src.FilesystemPath
 	_, err := m.CreateWritableSnapshot(src, dest, &runner.RealRunner{})
 	require.NoError(t, err)
 	entries, err := os.ReadDir(dest)
@@ -162,8 +154,6 @@ func TestWritableCopyIntegrationRejectReadOnlyExistingCopy(t *testing.T) {
 		out, err := exec.Command("btrfs", "property", "set", target, "ro", "false").CombinedOutput()
 		require.NoError(t, err, "%s", out)
 	})
-	copy, err := m.CreateWritableSnapshot(src, dest, &runner.RealRunner{})
-	if err == nil {
-		assert.False(t, copy.IsReadOnly, "successful copy must be writable")
-	}
+	_, err = m.CreateWritableSnapshot(src, dest, &runner.RealRunner{})
+	require.ErrorContains(t, err, "not a writable snapshot")
 }

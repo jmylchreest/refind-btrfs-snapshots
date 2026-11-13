@@ -15,6 +15,9 @@ type Manager struct {
 	maxDepth     int
 	rwsnapFormat string
 	useLocalTime bool
+
+	// Optional metadata reader; nil uses the btrfs command.
+	readSubvolumeInfo func(string) (*Subvolume, error)
 }
 
 // NewManager creates a new btrfs manager.

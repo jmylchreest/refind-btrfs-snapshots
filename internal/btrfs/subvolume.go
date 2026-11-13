@@ -19,6 +19,9 @@ func (m *Manager) getRootSubvolume(mountpoint string) (*Subvolume, error) {
 
 // getSubvolumeInfo gets detailed information about a subvolume
 func (m *Manager) getSubvolumeInfo(path string) (*Subvolume, error) {
+	if m.readSubvolumeInfo != nil {
+		return m.readSubvolumeInfo(path)
+	}
 	return m.runSubvolumeShow(path)
 }
 
