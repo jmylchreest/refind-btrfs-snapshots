@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/runner"
@@ -303,18 +302,31 @@ func (m *Manager) looksLikeSnapshot(subvol *Subvolume) bool {
 	return false
 }
 
-// CleanupOldSnapshots removes old writable snapshots from the destination directory
-func (m *Manager) CleanupOldSnapshots(destDir string, keepCount int, r runner.Runner) error {
-	if keepCount < 0 {
-		return fmt.Errorf("keepCount must be non-negative")
-	}
-
-	if keepCount == 0 {
+// CleanupUnselectedSnapshots removes managed copies not used by this run.
+// An empty selection is deliberately non-destructive: discovery may be incomplete.
+func (m *Manager) CleanupUnselectedSnapshots(destDir string, selected []*Snapshot, r runner.Runner) error {
+	if len(selected) == 0 {
 		return nil
 	}
-
-	log.Debug().Str("dest_dir", destDir).Int("keep_count", keepCount).Msg("Cleaning up old snapshots")
-
+	keep := make(map[string]bool, len(selected))
+	for _, snapshot := range selected {
+		if snapshot == nil || snapshot.FilesystemPath == "" {
+			return fmt.Errorf("cannot clean up copies with an invalid selected snapshot")
+		}
+		path := snapshot.FilesystemPath
+		if snapshot.PlannedFilesystemPath != "" {
+			path = snapshot.PlannedFilesystemPath
+		}
+		path, err := filepath.Abs(path)
+		if err != nil {
+			return fmt.Errorf("invalid selected snapshot path: %w", err)
+		}
+		keep[path] = true
+	}
+	destDir, err := filepath.Abs(destDir)
+	if err != nil {
+		return fmt.Errorf("invalid destination directory: %w", err)
+	}
 	entries, err := os.ReadDir(destDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -322,33 +334,28 @@ func (m *Manager) CleanupOldSnapshots(destDir string, keepCount int, r runner.Ru
 		}
 		return fmt.Errorf("failed to read destination directory: %w", err)
 	}
-
-	var snapshots []string
 	for _, entry := range entries {
-		if entry.IsDir() && strings.HasPrefix(entry.Name(), "rwsnap_") {
-			snapshots = append(snapshots, entry.Name())
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "rwsnap_") {
+			continue
+		}
+		path := filepath.Join(destDir, entry.Name())
+		if keep[path] {
+			continue
+		}
+		subvol, err := m.getSubvolumeInfo(path)
+		if err != nil {
+			log.Warn().Err(err).Str("path", path).Msg("Not a valid subvolume, skipping deletion")
+			continue
+		}
+		// A plain subvolume with a matching name is not a managed snapshot copy.
+		if subvol.ParentUUID == "" || subvol.ParentUUID == "-" {
+			continue
+		}
+		log.Info().Str("path", path).Msg("Removing unselected snapshot copy")
+		if err := r.Command("btrfs", []string{"subvolume", "delete", path}, "Remove unselected snapshot copy"); err != nil {
+			log.Warn().Err(err).Str("path", path).Msg("Failed to remove snapshot copy")
 		}
 	}
-
-	slices.Sort(snapshots)
-
-	if len(snapshots) > keepCount {
-		toRemove := snapshots[:len(snapshots)-keepCount]
-		for _, snapshot := range toRemove {
-			snapshotPath := filepath.Join(destDir, snapshot)
-			log.Info().Str("path", snapshotPath).Msg("Removing old snapshot")
-
-			if _, err := m.getSubvolumeInfo(snapshotPath); err != nil {
-				log.Warn().Err(err).Str("path", snapshotPath).Msg("Not a valid subvolume, skipping deletion")
-				continue
-			}
-
-			if err := r.Command("btrfs", []string{"subvolume", "delete", snapshotPath}, "Remove old snapshot"); err != nil {
-				log.Warn().Err(err).Str("path", snapshotPath).Msg("Failed to remove old snapshot")
-			}
-		}
-	}
-
 	return nil
 }
 

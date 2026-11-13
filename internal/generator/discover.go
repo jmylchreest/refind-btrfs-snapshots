@@ -129,7 +129,10 @@ func (p *Pipeline) processWritability(allSnapshots, selected []*btrfs.Snapshot) 
 			}
 		}
 		if p.Cfg.Behavior.CleanupOldSnapshots {
-			if err := p.Btrfs.CleanupOldSnapshots(destDir, p.Cfg.Snapshot.SelectionCount, p.Runner); err != nil {
+			// A failed copy must not turn an incomplete result into a deletion list.
+			if len(processed) != len(selected) {
+				log.Warn().Msg("Skipping copy cleanup because not all selected snapshots were processed")
+			} else if err := p.Btrfs.CleanupUnselectedSnapshots(destDir, processed, p.Runner); err != nil {
 				log.Warn().Err(err).Msg("Failed to cleanup old snapshots")
 			}
 		}

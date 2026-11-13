@@ -122,12 +122,12 @@ func (r *writableCopyIntegrationRecorder) Command(_ string, args []string, _ str
 	return nil
 }
 
-func TestWritableCopyIntegrationCleanupZeroKeepsAll(t *testing.T) {
+func TestWritableCopyIntegrationCleanupKeepsAllSelected(t *testing.T) {
 	m, src, dest := writableCopyIntegrationFixture(t)
-	_, err := m.CreateWritableSnapshot(src, dest, &runner.RealRunner{})
+	copy, err := m.CreateWritableSnapshot(src, dest, &runner.RealRunner{})
 	require.NoError(t, err)
 	r := &writableCopyIntegrationRecorder{}
-	require.NoError(t, m.CleanupOldSnapshots(dest, 0, r))
+	require.NoError(t, m.CleanupUnselectedSnapshots(dest, []*Snapshot{copy}, r))
 	assert.Empty(t, r.commands, "zero means include all; no deletion should be scheduled")
 }
 
