@@ -22,19 +22,9 @@ func (g *Generator) updateOptionsForSnapshot(originalOptions string, snapshot *b
 	rootflags := parser.ExtractRootFlags(originalOptions)
 	originalSubvol := parser.ExtractSubvol(rootflags)
 
-	var snapshotSubvol string
-
-	var snapshotPathPart string
-	if strings.HasPrefix(snapshot.Path, "@") {
-		snapshotPathPart = strings.TrimPrefix(snapshot.Path, "@")
-	} else {
-		snapshotPathPart = snapshot.Path
-	}
-
-	if originalSubvol != "" && strings.HasPrefix(originalSubvol, "/@") {
-		snapshotSubvol = "/@" + snapshotPathPart
-	} else {
-		snapshotSubvol = "@" + snapshotPathPart
+	snapshotSubvol := strings.TrimPrefix(snapshot.Path, "/")
+	if strings.HasPrefix(originalSubvol, "/") {
+		snapshotSubvol = "/" + snapshotSubvol
 	}
 
 	options = parser.UpdateSubvol(options, snapshotSubvol)

@@ -19,6 +19,9 @@ func (m *Manager) getRootSubvolume(mountpoint string) (*Subvolume, error) {
 
 // getSubvolumeInfo gets detailed information about a subvolume
 func (m *Manager) getSubvolumeInfo(path string) (*Subvolume, error) {
+	if m.readSubvolumeInfo != nil {
+		return m.readSubvolumeInfo(path)
+	}
 	return m.runSubvolumeShow(path)
 }
 
@@ -57,6 +60,10 @@ func (m *Manager) parseSubvolumeShow(output string) (*Subvolume, error) {
 		value := strings.TrimSpace(parts[1])
 
 		switch key {
+		case "UUID":
+			subvol.UUID = value
+		case "Parent UUID":
+			subvol.ParentUUID = value
 		case "Name":
 			if subvol.Path == "" {
 				subvol.Path = value

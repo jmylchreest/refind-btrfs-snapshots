@@ -54,3 +54,11 @@ func TestRewriteCmdline(t *testing.T) {
 		})
 	}
 }
+
+func TestPlannedCopyCmdline(t *testing.T) {
+	for _, path := range []string{"@/.copies/new", "copies/new", "@home/copies/new"} {
+		s := &btrfs.Snapshot{Subvolume: &btrfs.Subvolume{Path: path}}
+		got := rewriteCmdline("root=UUID=test rootflags=subvol=/@,subvolid=256 rw", s)
+		assert.Equal(t, "root=UUID=test rootflags=subvol=/"+path+" rw", got)
+	}
+}

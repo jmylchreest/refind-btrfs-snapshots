@@ -31,7 +31,7 @@ func TestRefindQuotedFields(t *testing.T) {
 
 func TestRefindSerialisationRegeneration(t *testing.T) {
 	g := NewGenerator("/boot", "2006-01-02", false)
-	snap := &btrfs.Snapshot{Subvolume: &btrfs.Subvolume{ID: 42, Path: "/.snapshots/42/snapshot"}, SnapshotTime: time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)}
+	snap := &btrfs.Snapshot{Subvolume: &btrfs.Subvolume{ID: 42, Path: "@/.snapshots/42/snapshot"}, SnapshotTime: time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)}
 	snapshots := []*btrfs.Snapshot{snap}
 	raw := `quiet root=UUID=abc rootflags=subvol=/@ my_opt="with  quotes" initrd=\EFI\linux.img`
 	quoted := `"quiet root=UUID=abc rootflags=subvol=/@ my_opt=""with  quotes"" initrd=\EFI\linux.img"`
@@ -79,7 +79,7 @@ func TestRefindTemplateOptionsQuoted(t *testing.T) {
 		if detected {
 			g.bootSets = []*kernel.BootSet{{Kernel: &kernel.BootImage{Path: "/vmlinuz-linux"}}}
 		}
-		snapshots := []*btrfs.Snapshot{{Subvolume: &btrfs.Subvolume{ID: 42, Path: "/.snapshots/42/snapshot"}}}
+		snapshots := []*btrfs.Snapshot{{Subvolume: &btrfs.Subvolume{ID: 42, Path: "@/.snapshots/42/snapshot"}}}
 		d, err := g.GenerateManagedConfigDiff(nil, snapshots, &btrfs.Filesystem{UUID: "abc"}, filepath.Join(t.TempDir(), "new.conf"))
 		require.NoError(t, err)
 		count := 0
@@ -99,7 +99,7 @@ func TestRefindSerialiserRejectsMultilineValues(t *testing.T) {
 	for _, value := range []string{"quiet\nloader evil", "quiet\r", "quiet\x00"} {
 		g := NewGenerator("/boot", "2006", false)
 		entry := &MenuEntry{Title: "Linux", Options: value}
-		snap := &btrfs.Snapshot{Subvolume: &btrfs.Subvolume{ID: 42, Path: "/.snapshots/42/snapshot"}}
+		snap := &btrfs.Snapshot{Subvolume: &btrfs.Subvolume{ID: 42, Path: "@/.snapshots/42/snapshot"}}
 		d, err := g.GenerateManagedConfigDiff([]*MenuEntry{entry}, nil, nil, filepath.Join(t.TempDir(), "new.conf"))
 		require.Error(t, err)
 		require.Nil(t, d)

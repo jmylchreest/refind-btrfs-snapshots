@@ -21,6 +21,8 @@ type Filesystem struct {
 
 // Subvolume represents a btrfs subvolume
 type Subvolume struct {
+	UUID        string    `json:"uuid,omitempty"`
+	ParentUUID  string    `json:"parent_uuid,omitempty"`
 	ID          uint64    `json:"id"`
 	Path        string    `json:"path"`
 	ParentID    uint64    `json:"parent_id"`
@@ -39,6 +41,9 @@ type Snapshot struct {
 	Description    string    `json:"description,omitempty"`
 	SnapperNum     int       `json:"snapper_num,omitempty"`
 	SnapperType    string    `json:"snapper_type,omitempty"`
+
+	// PlannedFilesystemPath is the write destination for a copy that only exists in a dry run.
+	PlannedFilesystemPath string `json:"planned_filesystem_path,omitempty"`
 }
 
 // SnapperInfo represents the snapper info.xml file structure

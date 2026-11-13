@@ -86,6 +86,17 @@ func (p *ParameterParser) Has(text, param string) bool {
 
 // Remove removes a parameter from the text
 func (p *ParameterParser) Remove(text, param string) string {
+	if strings.Contains(p.separators, ",") {
+		parts := strings.FieldsFunc(text, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' })
+		kept := parts[:0]
+		for _, part := range parts {
+			if !strings.HasPrefix(part, param+"=") {
+				kept = append(kept, part)
+			}
+		}
+		return strings.Join(kept, ",")
+	}
+
 	pattern := cachedRegexp(fmt.Sprintf(`\s*%s=([^%s]+)\s*`,
 		regexp.QuoteMeta(param), p.separators))
 	return strings.TrimSpace(pattern.ReplaceAllString(text, " "))
@@ -160,6 +171,20 @@ func (p *BootOptionsParser) UpdateSubvol(options, newSubvol string) string {
 
 // UpdateSubvolID updates the subvolid parameter in boot options
 func (p *BootOptionsParser) UpdateSubvolID(options, newSubvolID string) string {
+	// Zero denotes a planned snapshot whose ID has not been allocated yet.
+	// Keep its subvol path, but remove any stale source ID.
+	if newSubvolID == "0" {
+		rootflags := p.ExtractRootFlags(options)
+		if rootflags == "" {
+			return options
+		}
+		rootflags = p.CommaParser.Remove(rootflags, "subvolid")
+		if rootflags == "" {
+			return p.SpaceParser.Remove(options, "rootflags")
+		}
+		return p.SpaceParser.Update(options, "rootflags", rootflags)
+	}
+
 	rootflags := p.ExtractRootFlags(options)
 	if rootflags == "" {
 		// No rootflags, add them

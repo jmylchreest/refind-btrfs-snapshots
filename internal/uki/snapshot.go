@@ -24,12 +24,9 @@ func rewriteCmdline(baseCmdline string, snap *btrfs.Snapshot) string {
 	rootflags := p.ExtractRootFlags(baseCmdline)
 	originalSubvol := p.ExtractSubvol(rootflags)
 
-	pathPart := strings.TrimPrefix(snap.Path, "@")
-	var snapshotSubvol string
-	if originalSubvol != "" && strings.HasPrefix(originalSubvol, "/@") {
-		snapshotSubvol = "/@" + pathPart
-	} else {
-		snapshotSubvol = "@" + pathPart
+	snapshotSubvol := strings.TrimPrefix(snap.Path, "/")
+	if strings.HasPrefix(originalSubvol, "/") {
+		snapshotSubvol = "/" + snapshotSubvol
 	}
 
 	out := p.UpdateSubvol(baseCmdline, snapshotSubvol)

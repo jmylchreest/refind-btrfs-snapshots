@@ -571,3 +571,16 @@ func TestIsSnapshotBootFromRootFS(t *testing.T) {
 		})
 	}
 }
+
+func TestParseSubvolumeLineage(t *testing.T) {
+	m := NewManager(nil, 0, "", false)
+	sv, err := m.parseSubvolumeShow("@/.copies/new\nSubvolume ID: 200\nUUID: copy-uuid\nParent UUID: source-uuid\nParent ID: 256\nFlags: -\n")
+	assert.NoError(t, err)
+	if sv == nil {
+		t.Fatal("missing subvolume")
+	}
+	assert.Equal(t, "copy-uuid", sv.UUID)
+	assert.Equal(t, "source-uuid", sv.ParentUUID)
+	// Parent ID describes containment, not the snapshot's source identity.
+	assert.Equal(t, uint64(256), sv.ParentID)
+}

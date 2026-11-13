@@ -508,3 +508,16 @@ func TestParameterParser_RemoveAll(t *testing.T) {
 		})
 	}
 }
+
+func TestUnknownSnapshotIDRemovesSourceID(t *testing.T) {
+	for _, flags := range []string{
+		"subvolid=123,subvol=@copy,compress=zstd",
+		"subvol=@copy,subvolid=123,compress=zstd",
+		"subvol=@copy,compress=zstd,subvolid=123",
+		"subvol=@copy,compress=zstd",
+	} {
+		got := NewBootOptionsParser().UpdateSubvolID("quiet rootflags="+flags+" rw", "0")
+		assert.Equal(t, "quiet rootflags=subvol=@copy,compress=zstd rw", got)
+	}
+	assert.Equal(t, "quiet rw", NewBootOptionsParser().UpdateSubvolID("quiet rootflags=subvolid=123 rw", "0"))
+}

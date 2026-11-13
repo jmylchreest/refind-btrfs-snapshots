@@ -1,6 +1,8 @@
 package fstab
 
 import (
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -760,7 +762,6 @@ func TestGetFieldOrDefault(t *testing.T) {
 	}
 }
 
-
 func TestManager_AnalyzeBootMount(t *testing.T) {
 	tests := []struct {
 		name                string
@@ -932,4 +933,25 @@ func TestIsValidUUID(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPlannedSnapshotFstab(t *testing.T) {
+	source := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(source, "etc"), 0755))
+	content := "UUID=test / btrfs subvol=@,subvolid=256,compress=zstd 0 0\n"
+	require.NoError(t, os.WriteFile(filepath.Join(source, "etc", "fstab"), []byte(content), 0644))
+	snapshot := &btrfs.Snapshot{
+		Subvolume:             &btrfs.Subvolume{Path: "@/.copies/new"},
+		FilesystemPath:        source,
+		PlannedFilesystemPath: "/.copies/new",
+	}
+	d, err := NewManager().UpdateSnapshotFstabDiff(snapshot, &btrfs.Filesystem{UUID: "test"})
+	require.NoError(t, err)
+	require.NotNil(t, d)
+	assert.Equal(t, "/.copies/new/etc/fstab", d.Path)
+	assert.Contains(t, d.Modified, "subvol=/@/.copies/new,compress=zstd")
+	assert.NotContains(t, d.Modified, "subvolid=")
+	got, err := os.ReadFile(filepath.Join(source, "etc", "fstab"))
+	require.NoError(t, err)
+	assert.Equal(t, content, string(got))
 }
