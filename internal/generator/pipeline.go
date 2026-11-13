@@ -12,13 +12,24 @@ import (
 	"github.com/jmylchreest/refind-btrfs-snapshots/internal/runner"
 )
 
+// snapshotManager is the filesystem boundary used by snapshot discovery.
+type snapshotManager interface {
+	GetRootFilesystem() (*btrfs.Filesystem, error)
+	IsSnapshotBootFromRootFS(*btrfs.Filesystem) bool
+	FindSnapshots(*btrfs.Filesystem) ([]*btrfs.Snapshot, error)
+	MakeSnapshotWritable(*btrfs.Snapshot, runner.Runner) error
+	CleanupSnapshotWritability([]*btrfs.Snapshot, []*btrfs.Snapshot, runner.Runner) error
+	CreateWritableSnapshot(*btrfs.Snapshot, string, runner.Runner) (*btrfs.Snapshot, error)
+	CleanupUnselectedSnapshots(string, []*btrfs.Snapshot, runner.Runner) error
+}
+
 // Pipeline bundles the dependencies needed for snapshot generation so each
 // phase doesn't need to re-receive them. Construct once at the cmd boundary
 // (with already-resolved managers, ESP path, and kernel scanner) then call
 // Discover and BuildPatch in sequence.
 type Pipeline struct {
 	Cfg           *config.Config
-	Btrfs         *btrfs.Manager
+	Btrfs         snapshotManager
 	Fstab         *fstab.Manager
 	Runner        runner.Runner
 	ESPPath       string

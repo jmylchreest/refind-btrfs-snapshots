@@ -107,13 +107,12 @@ func TestWritableCopyRequiresMountedPathAndUUID(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestCleanupZeroDoesNotInspectDestination(t *testing.T) {
+func TestCleanupEmptySelectionDoesNotInspectDestination(t *testing.T) {
 	m := NewManager(nil, 0, "", false)
 	// A file would fail ReadDir; keeping all should return before touching it.
 	path := filepath.Join(t.TempDir(), "file")
 	require.NoError(t, os.WriteFile(path, nil, 0644))
-	require.NoError(t, m.CleanupOldSnapshots(path, 0, &runner.RealRunner{}))
-	require.Error(t, m.CleanupOldSnapshots(path, -1, &runner.RealRunner{}))
+	require.NoError(t, m.CleanupUnselectedSnapshots(path, nil, &runner.RealRunner{}))
 }
 
 // copyTestRunner implements only the two mutations exercised by these tests.
@@ -122,6 +121,7 @@ type copyTestRunner struct {
 	runner.RealRunner
 	source         string
 	beforeSnapshot func() error
+	snapshotCalls  int
 }
 
 func writeCopyTestMetadata(path string, subvol *Subvolume) error {
@@ -158,6 +158,7 @@ func (r *copyTestRunner) Command(name string, args []string, _ string) error {
 		if err := os.CopyFS(target, os.DirFS(r.source)); err != nil {
 			return err
 		}
+		r.snapshotCalls++
 		return writeCopyTestMetadata(target, &Subvolume{ID: 200, UUID: "copy-uuid", ParentUUID: "source-uuid", Path: "@/.copies/test"})
 	case "delete":
 		if len(args) != 3 {
@@ -184,14 +185,14 @@ func TestWritableCopyDoesNotOverwriteConcurrentDestination(t *testing.T) {
 	assert.Equal(t, filepath.Base(target), entries[0].Name())
 }
 
-func TestCleanupPositiveCountStillRemovesOlderCopies(t *testing.T) {
+func TestCleanupRemovesUnselectedCopy(t *testing.T) {
 	m, src, dest, older, r := copyFixture(t)
 	_, err := m.CreateWritableSnapshot(src, dest, r)
 	require.NoError(t, err)
 	src.SnapshotTime = src.SnapshotTime.Add(time.Hour)
 	newer, err := m.CreateWritableSnapshot(src, dest, r)
 	require.NoError(t, err)
-	require.NoError(t, m.CleanupOldSnapshots(dest, 1, r))
+	require.NoError(t, m.CleanupUnselectedSnapshots(dest, []*Snapshot{newer}, r))
 	_, err = os.Stat(older)
 	assert.True(t, os.IsNotExist(err))
 	_, err = os.Stat(GetSnapshotFstabPath(newer))

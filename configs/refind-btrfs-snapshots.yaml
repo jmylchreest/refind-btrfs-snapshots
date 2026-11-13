@@ -49,7 +49,8 @@ behavior:
   # This prevents accidental snapshot generation from within a snapshot
   exit_on_snapshot_boot: true
 
-  # Clean up old writable snapshots that exceed selection_count
+  # Remove writable copies not selected for this run, including orphan copies.
+  # Cleanup is skipped when selection is empty or any selected copy fails.
   cleanup_old_snapshots: true
 
 # Logging Configuration
